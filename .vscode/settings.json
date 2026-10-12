@@ -1,0 +1,10 @@
+{
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx2G -Xms100m -Xlog:disable",
+    "chat.tools.terminal.autoApprove": {
+        "/^node -p \"JSON\\.stringify\\(\\{expo:require\\('\\./node_modules/expo/package\\.json'\\)\\.version,react:require\\('\\./node_modules/react/package\\.json'\\)\\.version,reactNative:require\\('\\./node_modules/react-native/package\\.json'\\)\\.version,packageManager:require\\('\\./package\\.json'\\)\\.packageManager\\}\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
