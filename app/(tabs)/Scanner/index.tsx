@@ -46,8 +46,6 @@ const ScannerScreen = () => {
         const json = await response.json();
         if (response.ok && json?.data?.length > 0) {
           setRejectOptions(json.data);
-          console.log('API Reject Options:', json.data);
-          console.log('use state Reject Options:', rejectOptions);
         } else {
           console.warn('Failed to fetch reject options');
         }

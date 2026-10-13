@@ -55,6 +55,11 @@ export default function ProfileScreen() {
       if (result.success) {
         alert(result.message);
         setModalVisible(false);
+        await Promise.all([
+          SecureStore.deleteItemAsync('employee_id'),
+          SecureStore.deleteItemAsync('full_name'),
+          SecureStore.deleteItemAsync('password'),
+        ]);
         router.replace('/');
       } else {
         alert(result.message);

@@ -6,21 +6,24 @@ type AppScreenProps = React.PropsWithChildren<{
   title: string;
   subtitle?: string;
   contentStyle?: ViewStyle;
+  showHeading?: boolean;
 }>;
 
-export function AppScreen({ title, subtitle, contentStyle, children }: AppScreenProps) {
-  const { colors } = useAppTheme();
+export function AppScreen({ title, subtitle, contentStyle, showHeading = true, children }: AppScreenProps) {
+  const { colors, uiMode } = useAppTheme();
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.content, contentStyle]}
+      contentContainerStyle={[styles.content, uiMode === 'modern' && styles.modernContent, contentStyle]}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.inner}>
-        <View style={styles.pageHeading}>
-          <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
-          {!!subtitle && <Text style={[styles.subtitle, { color: colors.muted }]}>{subtitle}</Text>}
-        </View>
+        {showHeading && (
+          <View style={styles.pageHeading}>
+            <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+            {!!subtitle && <Text style={[styles.subtitle, { color: colors.muted }]}>{subtitle}</Text>}
+          </View>
+        )}
         {children}
       </View>
     </ScrollView>
@@ -38,6 +41,7 @@ export function GlassPanel({ children, style }: React.PropsWithChildren<{ style?
 
 const styles = StyleSheet.create({
   content: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 26, paddingBottom: 36 },
+  modernContent: { paddingHorizontal: 16, paddingTop: 28, paddingBottom: 16 },
   inner: { width: '100%', maxWidth: 1120, alignSelf: 'center' },
   pageHeading: { marginBottom: 20, gap: 6 },
   title: { fontSize: 26, lineHeight: 32, fontWeight: '700', letterSpacing: -0.5 },

@@ -1,61 +1,203 @@
 import React, { useEffect, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
-import { useAppTheme } from '@/contexts/ThemeContext';
+import { useAppTheme, type AppTheme } from '@/contexts/ThemeContext';
 
 export default function Home() {
   const [fullName, setFullName] = useState('');
-  const { colors } = useAppTheme();
+  const { colors, theme, uiMode } = useAppTheme();
+  const { height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
 
   useEffect(() => {
     SecureStore.getItemAsync('full_name').then((name) => {
       if (name) setFullName(name);
-    });
+    }).catch((error) => console.error('Unable to load profile name:', error));
   }, []);
+
+  if (uiMode === 'classic') {
+    return <ClassicHome fullName={fullName} />;
+  }
+
+  const palette = getDashboardPalette(theme);
+  const compact = height < 740;
+
+  return (
+    <View style={[styles.modernRoot, { backgroundColor: palette.background }]}>
+      <ScrollView
+        style={styles.modernScroll}
+        contentContainerStyle={[styles.modernContent, { paddingBottom: 16 + insets.bottom }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.blueHeader, { backgroundColor: palette.header, paddingTop: insets.top + (compact ? 30 : 36), minHeight: insets.top + (compact ? 186 : 210) }]}>
+          <Text style={styles.appTitle}>Production App</Text>
+          <View style={styles.welcomeRow}>
+            <View style={styles.welcomeCopy}>
+              <Text style={styles.welcomeLabel}>Welcome,</Text>
+              <Text style={styles.welcomeName} numberOfLines={1}>{fullName || 'Team member'}</Text>
+              <Text style={styles.welcomeRole}>Operator</Text>
+            </View>
+            <View style={styles.avatar}>
+              {fullName ? (
+                <Text style={styles.avatarInitials}>{fullName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</Text>
+              ) : (
+                <Image source={require('@/assets/images/gti_icon.png')} style={styles.avatarLogo} resizeMode="contain" />
+              )}
+            </View>
+          </View>
+        </View>
+
+        <View style={[styles.dashboardPanel, { backgroundColor: palette.panel, marginTop: compact ? -27 : -34 }]}>
+          <View style={styles.actionList}>
+            <DashboardAction
+              icon="clipboard-outline"
+              title="Search Order"
+              subtitle="Find production orders"
+              tint="#3687cf"
+              background={palette.blueTint}
+              textColor={palette.text}
+              mutedColor={palette.muted}
+              onPress={() => router.push('/Orders/index')}
+            />
+            <DashboardAction
+              icon="bar-chart-outline"
+              title="Production Entry"
+              subtitle="Record completed quantity"
+              tint="#31a779"
+              background={palette.greenTint}
+              textColor={palette.text}
+              mutedColor={palette.muted}
+              onPress={() => router.push('/ProductionEntry/index')}
+            />
+            <DashboardAction
+              icon="close-circle"
+              title="Rejection Entry"
+              subtitle="Record rejected quantity"
+              tint="#dd5360"
+              background={palette.redTint}
+              textColor={palette.text}
+              mutedColor={palette.muted}
+              onPress={() => router.push('/RejectionEntry')}
+            />
+            <DashboardAction
+              icon="time"
+              title="Transaction History"
+              subtitle="View submitted records"
+              tint="#8a6ad0"
+              background={palette.purpleTint}
+              textColor={palette.text}
+              mutedColor={palette.muted}
+              onPress={() => router.push('/History/index')}
+            />
+          </View>
+
+          <View style={[styles.summaryHeading, { borderTopColor: palette.divider }]}>
+            <Text style={[styles.summaryTitle, { color: palette.text }]}>Today's Summary</Text>
+            <View style={styles.summaryDate}>
+              <Ionicons name="calendar-outline" size={14} color={palette.muted} />
+              <Text style={[styles.summaryDateText, { color: palette.muted }]}>{new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
+            </View>
+          </View>
+          <View style={styles.summaryCards}>
+            <SummaryCard value="23" label="Production Qty" tint="#31a779" background={palette.greenTint} textColor={palette.text} />
+            <SummaryCard value="5" label="Rejection Qty" tint="#dd5360" background={palette.redTint} textColor={palette.text} />
+            <SummaryCard value="28" label="Total Entries" tint="#3687cf" background={palette.blueTint} textColor={palette.text} />
+          </View>
+        </View>
+      </ScrollView>
+    </View>
+  );
+}
+
+function DashboardAction({ icon, title, subtitle, tint, background, textColor, mutedColor, onPress }: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  tint: string;
+  background: string;
+  textColor: string;
+  mutedColor: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.dashboardAction, { backgroundColor: background }, pressed && styles.pressed]}>
+      <View style={[styles.actionIcon, { backgroundColor: `${tint}20` }]}>
+        <Ionicons name={icon} size={22} color={tint} />
+      </View>
+      <View style={styles.actionCopy}>
+        <Text style={[styles.actionTitle, { color: textColor }]}>{title}</Text>
+        <Text style={[styles.actionSubtitle, { color: mutedColor }]}>{subtitle}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={17} color={mutedColor} />
+    </Pressable>
+  );
+}
+
+function SummaryCard({ value, label, tint, background, textColor }: {
+  value: string;
+  label: string;
+  tint: string;
+  background: string;
+  textColor: string;
+}) {
+  return (
+    <View style={[styles.summaryCard, { backgroundColor: background }]}>
+      <Text style={[styles.summaryValue, { color: tint }]}>{value}</Text>
+      <Text style={[styles.summaryLabel, { color: textColor }]}>{label}</Text>
+    </View>
+  );
+}
+
+function ClassicHome({ fullName }: { fullName: string }) {
+  const { colors } = useAppTheme();
+  const router = useRouter();
 
   return (
     <AppScreen title="Welcome back" subtitle="Your operations workspace, at a glance.">
-      <GlassPanel style={styles.hero}>
-        <View style={styles.heroCopy}>
-          <View style={[styles.eyebrow, { backgroundColor: colors.accentSoft }]}>
-            <View style={[styles.statusDot, { backgroundColor: colors.accent }]} />
-            <Text style={[styles.eyebrowText, { color: colors.accent }]}>GTI WORKSPACE</Text>
+      <GlassPanel style={classicStyles.hero}>
+        <View style={classicStyles.heroCopy}>
+          <View style={[classicStyles.eyebrow, { backgroundColor: colors.accentSoft }]}>
+            <View style={[classicStyles.statusDot, { backgroundColor: colors.accent }]} />
+            <Text style={[classicStyles.eyebrowText, { color: colors.accent }]}>GTI WORKSPACE</Text>
           </View>
-          <Text style={[styles.greeting, { color: colors.text }]}>Hello{fullName ? `, ${fullName}` : ''}</Text>
-          <Text style={[styles.description, { color: colors.muted }]}>
-            Choose a workspace tool to continue your work.
-          </Text>
+          <Text style={[classicStyles.greeting, { color: colors.text }]}>Hello{fullName ? `, ${fullName}` : ''}</Text>
+          <Text style={[classicStyles.description, { color: colors.muted }]}>Choose a workspace tool to continue your work.</Text>
         </View>
-        <View style={[styles.heroIcon, { backgroundColor: colors.accentSoft }]}>
-          <Image source={require('@/assets/images/gti_icon.png')} style={styles.heroLogo} resizeMode="contain" />
+        <View style={[classicStyles.heroIcon, { backgroundColor: colors.accentSoft }]}>
+          <Image source={require('@/assets/images/gti_icon.png')} style={classicStyles.heroLogo} resizeMode="contain" />
         </View>
       </GlassPanel>
-
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick access</Text>
-      <View style={styles.actions}>
-        <QuickAction icon="scan-outline" title="Part scanner" subtitle="Scan part and machine codes" onPress={() => router.push('/Scanner')} />
-        <QuickAction icon="document-text-outline" title="Training form" subtitle="Record a training session" onPress={() => router.push('/trainingForm')} />
-        <QuickAction icon="compass-outline" title="Process guide" subtitle="Review the workflow steps" onPress={() => router.push('/explore')} />
+      <Text style={[classicStyles.sectionTitle, { color: colors.text }]}>Quick access</Text>
+      <View style={classicStyles.actions}>
+        <ClassicQuickAction icon="scan-outline" title="Part scanner" subtitle="Scan part and machine codes" onPress={() => router.push('/Scanner')} />
+        <ClassicQuickAction icon="document-text-outline" title="Training form" subtitle="Record a training session" onPress={() => router.push('/trainingForm')} />
+        <ClassicQuickAction icon="compass-outline" title="Process guide" subtitle="Review the workflow steps" onPress={() => router.push('/explore')} />
       </View>
     </AppScreen>
   );
 }
 
-function QuickAction({ icon, title, subtitle, onPress }: { icon: keyof typeof Ionicons.glyphMap; title: string; subtitle: string; onPress: () => void }) {
+function ClassicQuickAction({ icon, title, subtitle, onPress }: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+}) {
   const { colors } = useAppTheme();
   return (
-    <Pressable onPress={onPress} style={({ pressed, hovered }) => [styles.actionPressable, hovered && styles.actionHovered, pressed && styles.actionPressed]}>
-      <GlassPanel style={styles.actionCard}>
-        <View style={[styles.actionIcon, { backgroundColor: colors.accentSoft }]}>
+    <Pressable onPress={onPress} style={({ pressed, hovered }) => [classicStyles.actionPressable, hovered && classicStyles.actionHovered, pressed && styles.pressed]}>
+      <GlassPanel style={classicStyles.actionCard}>
+        <View style={[classicStyles.actionIcon, { backgroundColor: colors.accentSoft }]}>
           <Ionicons name={icon} size={21} color={colors.accent} />
         </View>
-        <View style={styles.actionCopy}>
-          <Text style={[styles.actionTitle, { color: colors.text }]}>{title}</Text>
-          <Text style={[styles.actionSubtitle, { color: colors.muted }]}>{subtitle}</Text>
+        <View style={classicStyles.actionCopy}>
+          <Text style={[classicStyles.actionTitle, { color: colors.text }]}>{title}</Text>
+          <Text style={[classicStyles.actionSubtitle, { color: colors.muted }]}>{subtitle}</Text>
         </View>
         <Ionicons name="arrow-forward" size={17} color={colors.muted} />
       </GlassPanel>
@@ -63,7 +205,68 @@ function QuickAction({ icon, title, subtitle, onPress }: { icon: keyof typeof Io
   );
 }
 
+function getDashboardPalette(theme: AppTheme) {
+  if (theme === 'dark') {
+    return {
+      background: '#10191e',
+      header: '#125481',
+      panel: '#1a272e',
+      text: '#edf4f5',
+      muted: '#a0b1b8',
+      divider: 'rgba(218,235,239,0.12)',
+      blueTint: 'rgba(54,135,207,0.18)',
+      greenTint: 'rgba(49,167,121,0.18)',
+      redTint: 'rgba(221,83,96,0.18)',
+      purpleTint: 'rgba(138,106,208,0.18)',
+    };
+  }
+  return {
+    background: '#f3f5f8',
+    header: '#1874b9',
+    panel: '#ffffff',
+    text: '#273849',
+    muted: '#7b8996',
+    divider: 'rgba(39,56,73,0.10)',
+    blueTint: '#edf5fd',
+    greenTint: '#edf8f2',
+    redTint: '#fff0f1',
+    purpleTint: '#f4f0fb',
+  };
+}
+
 const styles = StyleSheet.create({
+  modernRoot: { flex: 1 },
+  modernScroll: { flex: 1 },
+  modernContent: { flexGrow: 1 },
+  blueHeader: { paddingHorizontal: 22, paddingBottom: 43, borderBottomLeftRadius: 36, borderBottomRightRadius: 36 },
+  appTitle: { color: '#ffffff', fontSize: 22, fontWeight: '700', letterSpacing: -0.3 },
+  welcomeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 19 },
+  welcomeCopy: { flex: 1 },
+  welcomeLabel: { color: 'rgba(255,255,255,0.78)', fontSize: 12 },
+  welcomeName: { color: '#ffffff', fontSize: 19, fontWeight: '700', marginTop: 2 },
+  welcomeRole: { color: 'rgba(255,255,255,0.78)', fontSize: 11, marginTop: 2 },
+  avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' },
+  avatarInitials: { color: '#286b9f', fontSize: 14, fontWeight: '700' },
+  avatarLogo: { width: 32, height: 32 },
+  dashboardPanel: { marginHorizontal: 12, paddingHorizontal: 15, paddingTop: 16, paddingBottom: 18, borderRadius: 25, shadowColor: '#162e42', shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 7 }, elevation: 4 },
+  actionList: { gap: 10 },
+  dashboardAction: { minHeight: 70, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 13, paddingVertical: 10, borderRadius: 18 },
+  actionIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 13 },
+  actionCopy: { flex: 1, gap: 4 },
+  actionTitle: { fontSize: 12, fontWeight: '700' },
+  actionSubtitle: { fontSize: 10 },
+  pressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
+  summaryHeading: { minHeight: 53, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 9, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
+  summaryTitle: { fontSize: 12, fontWeight: '700' },
+  summaryDate: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  summaryDateText: { fontSize: 9 },
+  summaryCards: { flexDirection: 'row', gap: 8 },
+  summaryCard: { flex: 1, minHeight: 70, alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 7, paddingHorizontal: 3 },
+  summaryValue: { fontSize: 18, fontWeight: '800' },
+  summaryLabel: { fontSize: 9, lineHeight: 12, textAlign: 'center', marginTop: 3 },
+});
+
+const classicStyles = StyleSheet.create({
   hero: { minHeight: 185, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 25, overflow: 'hidden' },
   heroCopy: { flex: 1, gap: 13 },
   eyebrow: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 6 },
@@ -77,7 +280,6 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   actionPressable: { flexGrow: 1, flexBasis: 260 },
   actionHovered: { transform: [{ translateY: -2 }] },
-  actionPressed: { opacity: 0.78, transform: [{ scale: 0.99 }] },
   actionCard: { minHeight: 92, flexDirection: 'row', alignItems: 'center', gap: 13, padding: 16 },
   actionIcon: { width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 14 },
   actionCopy: { flex: 1, gap: 4 },

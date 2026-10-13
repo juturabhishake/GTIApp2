@@ -27,6 +27,21 @@ export default function LoginScreen() {
     return () => subscription.remove();
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      SecureStore.getItemAsync('employee_id'),
+      SecureStore.getItemAsync('full_name'),
+    ]).then(([employeeId, fullName]) => {
+      if (active && employeeId && fullName) router.replace('/Home');
+    }).catch((error) => {
+      console.error('Unable to check saved sign-in details:', error);
+    });
+    return () => {
+      active = false;
+    };
+  }, [router]);
+
   const handleLogin = async () => {
     setLoading(true);
     setErrorAnim(false);

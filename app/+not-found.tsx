@@ -1,11 +1,12 @@
 import React from 'react';
-import { Link, Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 export default function NotFoundScreen() {
   const { colors } = useAppTheme();
+  const router = useRouter();
   return (
     <>
       <Stack.Screen options={{ title: 'Page not found' }} />
@@ -15,12 +16,10 @@ export default function NotFoundScreen() {
         </View>
         <Text style={[styles.title, { color: colors.text }]}>This screen doesn't exist.</Text>
         <Text style={[styles.subtitle, { color: colors.muted }]}>The page may have moved or the address may be incorrect.</Text>
-        <Link href="/" asChild>
-          <Pressable style={[styles.button, { backgroundColor: colors.accent }]}>
-            <Text style={styles.buttonText}>Back to sign in</Text>
-            <Ionicons name="arrow-forward" size={17} color="#ffffff" />
-          </Pressable>
-        </Link>
+        <Pressable onPress={() => router.replace('/')} style={[styles.button, { backgroundColor: colors.accent }]}>
+          <Text style={styles.buttonText}>Back to sign in</Text>
+          <Ionicons name="arrow-forward" size={17} color="#ffffff" />
+        </Pressable>
       </View>
     </>
   );

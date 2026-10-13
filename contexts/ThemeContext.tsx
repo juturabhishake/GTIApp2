@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { Platform, useColorScheme as useSystemColorScheme } from 'react-native';
+import { DevSettings, Platform, useColorScheme as useSystemColorScheme } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
+import * as Updates from 'expo-updates';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type AppTheme = 'light' | 'dark';
+export type UiMode = 'classic' | 'modern';
 
 const palettes = {
   light: {
@@ -38,10 +40,12 @@ const palettes = {
 
 type ThemeContextValue = {
   preference: ThemePreference;
+  uiMode: UiMode;
   theme: AppTheme;
   colors: (typeof palettes)[AppTheme];
   ready: boolean;
   setPreference: (preference: ThemePreference) => Promise<void>;
+  setUiMode: (mode: UiMode) => Promise<void>;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -49,17 +53,24 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 export function AppThemeProvider({ children }: React.PropsWithChildren) {
   const systemColorScheme = useSystemColorScheme();
   const [preference, setPreferenceState] = useState<ThemePreference>('system');
+  const [uiMode, setUiModeState] = useState<UiMode>('modern');
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let active = true;
     const loadPreference = async () => {
       try {
-        const stored = Platform.OS === 'web'
+        const [stored, storedUiMode] = await Promise.all([Platform.OS === 'web'
           ? (typeof localStorage === 'undefined' ? null : localStorage.getItem('gti_theme'))
-          : await SecureStore.getItemAsync('gti_theme');
+          : SecureStore.getItemAsync('gti_theme'),
+        Platform.OS === 'web'
+          ? (typeof localStorage === 'undefined' ? null : localStorage.getItem('gti_ui_mode'))
+          : SecureStore.getItemAsync('gti_ui_mode')]);
         if (active && (stored === 'system' || stored === 'light' || stored === 'dark')) {
           setPreferenceState(stored);
+        }
+        if (active && (storedUiMode === 'classic' || storedUiMode === 'modern')) {
+          setUiModeState(storedUiMode);
         }
       } catch (error) {
         console.error('Unable to load saved theme preference:', error);
@@ -82,12 +93,29 @@ export function AppThemeProvider({ children }: React.PropsWithChildren) {
     await SecureStore.setItemAsync('gti_theme', nextPreference);
   };
 
+  const setUiMode = async (nextMode: UiMode) => {
+    if (nextMode === uiMode) return;
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('gti_ui_mode', nextMode);
+      setUiModeState(nextMode);
+      window.location.reload();
+      return;
+    }
+    await SecureStore.setItemAsync('gti_ui_mode', nextMode);
+    setUiModeState(nextMode);
+    if (Updates.isEnabled) {
+      await Updates.reloadAsync();
+    } else if (__DEV__) {
+      DevSettings.reload();
+    }
+  };
+
   const theme: AppTheme = preference === 'system'
     ? (systemColorScheme === 'dark' ? 'dark' : 'light')
     : preference;
   const value = useMemo(
-    () => ({ preference, theme, colors: palettes[theme], ready, setPreference }),
-    [preference, theme, ready],
+    () => ({ preference, uiMode, theme, colors: palettes[theme], ready, setPreference, setUiMode }),
+    [preference, uiMode, theme, ready],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
