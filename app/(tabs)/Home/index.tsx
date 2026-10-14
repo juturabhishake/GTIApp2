@@ -62,7 +62,7 @@ export default function Home() {
               background={palette.blueTint}
               textColor={palette.text}
               mutedColor={palette.muted}
-              onPress={() => router.push('/Orders/index')}
+              onPress={() => router.push('/Orders')}
             />
             <DashboardAction
               icon="bar-chart-outline"
@@ -72,7 +72,7 @@ export default function Home() {
               background={palette.greenTint}
               textColor={palette.text}
               mutedColor={palette.muted}
-              onPress={() => router.push('/ProductionEntry/index')}
+              onPress={() => router.push('/ProductionEntry')}
             />
             <DashboardAction
               icon="close-circle"
@@ -92,7 +92,7 @@ export default function Home() {
               background={palette.purpleTint}
               textColor={palette.text}
               mutedColor={palette.muted}
-              onPress={() => router.push('/History/index')}
+              onPress={() => router.push('/History')}
             />
           </View>
 

@@ -488,7 +488,7 @@ export default function TabLayout() {
               accessibilityRole="button"
               accessibilityLabel="Orders"
               accessibilityState={{ selected: pathname.toLowerCase().startsWith('/orders') }}
-              onPress={() => navigate('/Orders/index')}
+              onPress={() => navigate('/Orders')}
               style={({ pressed }) => [styles.modernFooterItem, pressed && styles.pressed]}
             >
               <View style={[styles.modernFooterItemContent, pathname.toLowerCase().startsWith('/orders') && { backgroundColor: colors.accentSoft }]}>
@@ -514,7 +514,7 @@ export default function TabLayout() {
               accessibilityRole="button"
               accessibilityLabel="History"
               accessibilityState={{ selected: pathname.toLowerCase().startsWith('/history') }}
-              onPress={() => navigate('/History/index')}
+              onPress={() => navigate('/History')}
               style={({ pressed }) => [styles.modernFooterItem, pressed && styles.pressed]}
             >
               <View style={[styles.modernFooterItemContent, pathname.toLowerCase().startsWith('/history') && { backgroundColor: colors.accentSoft }]}>
@@ -562,7 +562,7 @@ export default function TabLayout() {
             <Text style={[styles.entryMenuTitle, { color: colors.muted }]}>CHOOSE ENTRY</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={() => navigate('/ProductionEntry/index')}
+              onPress={() => navigate('/ProductionEntry')}
               style={({ pressed }) => [styles.entryMenuOption, { backgroundColor: colors.accentSoft }, pressed && styles.pressed]}
             >
               <View style={[styles.entryMenuIcon, { backgroundColor: colors.surfaceSolid }]}>

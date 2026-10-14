@@ -24,9 +24,10 @@ const OPTIONS_API_URL = 'https://gtims-quality-control.vercel.app/api/casting-re
 const expoHost = Constants.expoConfig?.hostUri?.split(':')[0];
 const localBackendHost = expoHost && !expoHost.includes('localhost')
   ? expoHost
-  : Platform.OS === 'android' ? 'https://gtiappsbackend.vercel.app' : 'localhost';
-const PART_DETAILS_API_URL = `http://${localBackendHost}:3000/api/product-matrix/part-details`;
-const REJECTION_SUBMIT_API_URL = `http://${localBackendHost}:3000/api/rejection/save`;
+  : Platform.OS === 'android' ? 'localhost:3000' : 'localhost:3000';
+// const localBackendHost = 'https://gtiappsbackend.vercel.app'
+const PART_DETAILS_API_URL = `http://${localBackendHost}/api/product-matrix/part-details`;
+const REJECTION_SUBMIT_API_URL = `http://${localBackendHost}/api/rejection/save`;
 
 type SelectOption = { value: string; label: string };
 type FormKey =
