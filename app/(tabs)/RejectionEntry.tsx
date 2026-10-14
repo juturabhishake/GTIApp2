@@ -13,7 +13,6 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import Constants from 'expo-constants';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import * as SecureStore from 'expo-secure-store';
@@ -21,13 +20,9 @@ import { AppScreen } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 const OPTIONS_API_URL = 'https://gtims-quality-control.vercel.app/api/casting-rejection/get-options';
-const expoHost = Constants.expoConfig?.hostUri?.split(':')[0];
-const localBackendHost = expoHost && !expoHost.includes('localhost')
-  ? expoHost
-  : Platform.OS === 'android' ? 'localhost:3000' : 'localhost:3000';
-// const localBackendHost = 'https://gtiappsbackend.vercel.app'
-const PART_DETAILS_API_URL = `http://${localBackendHost}/api/product-matrix/part-details`;
-const REJECTION_SUBMIT_API_URL = `http://${localBackendHost}/api/rejection/save`;
+const BACKEND_BASE_URL = 'https://gtiappsbackend.vercel.app';
+const PART_DETAILS_API_URL = `${BACKEND_BASE_URL}/api/product-matrix/part-details`;
+const REJECTION_SUBMIT_API_URL = `${BACKEND_BASE_URL}/api/rejection/save`;
 
 type SelectOption = { value: string; label: string };
 type FormKey =
@@ -231,6 +226,11 @@ async function readPartDetailsResponse(response: Response) {
   try {
     payload = JSON.parse(responseText);
   } catch {
+    if (response.status === 404) {
+      throw new Error(
+        `Part details API route was not found (HTTP 404) at ${PART_DETAILS_API_URL}. Redeploy the backend with its latest API routes.`,
+      );
+    }
     throw new Error(
       `Part details API returned a non-JSON response (HTTP ${response.status}) from ${PART_DETAILS_API_URL}. Check that the backend is running and the API route is available.`,
     );
