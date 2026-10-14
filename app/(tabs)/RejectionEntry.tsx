@@ -20,9 +20,14 @@ import { AppScreen } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 const OPTIONS_API_URL = 'https://gtims-quality-control.vercel.app/api/casting-rejection/get-options';
+const DIMENSIONS_OPTIONS_API_URL = 'https://gtims-quality-control.vercel.app/api/MG_Daily_Rejection/options/get-options';
 const BACKEND_BASE_URL = 'https://gtiappsbackend.vercel.app';
 const PART_DETAILS_API_URL = `${BACKEND_BASE_URL}/api/product-matrix/part-details`;
 const REJECTION_SUBMIT_API_URL = `${BACKEND_BASE_URL}/api/rejection/save`;
+
+function getOptionsApiUrl(type: string) {
+  return type === 'dimensions' ? DIMENSIONS_OPTIONS_API_URL : OPTIONS_API_URL;
+}
 
 type SelectOption = { value: string; label: string };
 type FormKey =
@@ -47,7 +52,7 @@ const fields: FieldDefinition[] = [
   { key: 'op', label: 'OP', kind: 'select', optionType: 'operations', placeholder: 'Select OP' },
   { key: 'fixPos', label: 'Fix Pos', kind: 'text', placeholder: 'Enter fix position' },
   { key: 'defectType', label: 'Type of Defect', kind: 'select', optionType: 'defectTypes', placeholder: 'Select defect' },
-  { key: 'dimension', label: 'HEX | NO | Nominal', kind: 'select', optionType: 'defectAreas', placeholder: 'Select dimension' },
+  { key: 'dimension', label: 'HEX | NO | Nominal', kind: 'select', optionType: 'dimensions', placeholder: 'Select dimension' },
   { key: 'actual', label: 'Actual', kind: 'number', placeholder: 'Enter actual value' },
   { key: 'qty', label: 'QTY', kind: 'number', placeholder: 'Enter quantity' },
   { key: 'operator', label: 'Operator', kind: 'select', optionType: 'employees', placeholder: 'Select operator' },
@@ -83,7 +88,7 @@ const initialForm: Record<FormKey, string> = {
   correctiveAction: '',
 };
 
-const optionTypes = ['shifts', 'foundAt', 'defectTypes', 'defectAreas', 'employees', 'operations', 'decisions'];
+const optionTypes = ['shifts', 'foundAt', 'defectTypes', 'dimensions', 'employees', 'operations', 'decisions'];
 const entryStatuses: SelectOption[] = [
   { value: 'open', label: 'Open' },
   { value: 'close', label: 'Close' },
@@ -287,7 +292,7 @@ export default function RejectionEntryScreen() {
   useEffect(() => {
     const controller = new AbortController();
     optionTypes.forEach((type) => {
-      fetch(OPTIONS_API_URL, {
+      fetch(getOptionsApiUrl(type), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ type }),
@@ -361,7 +366,7 @@ export default function RejectionEntryScreen() {
   const retryOptions = useCallback(async (type: string) => {
     setOptionErrors((current) => ({ ...current, [type]: '' }));
     try {
-      const response = await fetch(OPTIONS_API_URL, {
+      const response = await fetch(getOptionsApiUrl(type), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ type }),
