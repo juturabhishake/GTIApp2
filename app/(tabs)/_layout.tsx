@@ -22,12 +22,10 @@ import { useAppTheme, type ThemePreference } from '@/contexts/ThemeContext';
 
 const navigationItems: { label: string; icon: keyof typeof Ionicons.glyphMap; path: Href }[] = [
   { label: 'Overview', icon: 'grid-outline', path: '/Home' },
-  { label: 'Scanner', icon: 'scan-outline', path: '/Scanner' },
   { label: 'Rejection Entry', icon: 'close-circle-outline', path: '/RejectionEntry' },
-  { label: 'Training form', icon: 'document-text-outline', path: '/trainingForm' },
+  { label: 'Transaction History', icon: 'time-outline', path: '/History' },
   { label: 'Guide', icon: 'compass-outline', path: '/explore' },
   { label: 'Settings', icon: 'options-outline', path: '/Settings' },
-  { label: 'Profile', icon: 'person-outline', path: '/profile' },
 ];
 
 const themeChoices: { label: string; value: ThemePreference; icon: keyof typeof Ionicons.glyphMap }[] = [
@@ -78,12 +76,15 @@ export default function TabLayout() {
     }).finally(() => {
       if (active) setCredentialsReady(true);
     });
-    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
-    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
     return () => {
       active = false;
-      subscription.remove();
     };
+  }, [pathname]);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {

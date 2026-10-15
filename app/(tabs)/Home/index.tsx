@@ -4,11 +4,59 @@ import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme, type AppTheme } from '@/contexts/ThemeContext';
 
+const API_BASE_URL = 'http://10.225.51.14:3000';
+
+type DashboardSummary = {
+  productionQty: number;
+  rejectionQty: number;
+};
+
+function formatApiDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+async function getDashboardSummary(date: Date): Promise<DashboardSummary> {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard/summary`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: formatApiDate(date) }),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = payload && typeof payload === 'object' && 'message' in payload
+      ? String(payload.message)
+      : `Request failed (HTTP ${response.status}).`;
+    throw new Error(message);
+  }
+  if (!payload || typeof payload !== 'object' || !('data' in payload) || !payload.data || typeof payload.data !== 'object') {
+    throw new Error('The dashboard summary response did not contain summary data.');
+  }
+  const row = payload.data as Record<string, unknown>;
+  const getValue = (key: string) => {
+    const value = Number(Object.entries(row).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1]);
+    if (!Number.isFinite(value)) throw new Error(`The dashboard summary returned an invalid ${key}.`);
+    return value;
+  };
+  return {
+    productionQty: getValue('productionQty'),
+    rejectionQty: getValue('rejectionQty'),
+  };
+}
+
 export default function Home() {
   const [fullName, setFullName] = useState('');
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [summary, setSummary] = useState<DashboardSummary>({ productionQty: 0, rejectionQty: 0 });
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState('');
   const { colors, theme, uiMode } = useAppTheme();
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -20,8 +68,49 @@ export default function Home() {
     }).catch((error) => console.error('Unable to load profile name:', error));
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    setSummaryLoading(true);
+    setSummaryError('');
+    getDashboardSummary(selectedDate).then((nextSummary) => {
+      if (active) setSummary(nextSummary);
+    }).catch((error: unknown) => {
+      if (!active) return;
+      const message = error instanceof Error ? error.message : 'Unable to load the daily summary.';
+      setSummaryError(message);
+      console.error('Unable to load dashboard summary:', error);
+    }).finally(() => {
+      if (active) setSummaryLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [selectedDate]);
+
   if (uiMode === 'classic') {
-    return <ClassicHome fullName={fullName} />;
+    return (
+      <>
+        <ClassicHome
+          fullName={fullName}
+          summary={summary}
+          selectedDate={selectedDate}
+          summaryLoading={summaryLoading}
+          summaryError={summaryError}
+          onDatePress={() => setDatePickerVisible(true)}
+        />
+        <DateTimePickerModal
+          isVisible={datePickerVisible}
+          mode="date"
+          date={selectedDate}
+          maximumDate={new Date()}
+          onConfirm={(date) => {
+            setSelectedDate(date);
+            setDatePickerVisible(false);
+          }}
+          onCancel={() => setDatePickerVisible(false)}
+        />
+      </>
+    );
   }
 
   const palette = getDashboardPalette(theme);
@@ -98,18 +187,31 @@ export default function Home() {
 
           <View style={[styles.summaryHeading, { borderTopColor: palette.divider }]}>
             <Text style={[styles.summaryTitle, { color: palette.text }]}>Today's Summary</Text>
-            <View style={styles.summaryDate}>
+            <Pressable onPress={() => setDatePickerVisible(true)} style={styles.summaryDate} accessibilityRole="button">
               <Ionicons name="calendar-outline" size={14} color={palette.muted} />
-              <Text style={[styles.summaryDateText, { color: palette.muted }]}>{new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
-            </View>
+              <Text style={[styles.summaryDateText, { color: palette.muted }]}>{selectedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
+              <Ionicons name="chevron-down" size={12} color={palette.muted} />
+            </Pressable>
           </View>
           <View style={styles.summaryCards}>
-            <SummaryCard value="23" label="Production Qty" tint="#31a779" background={palette.greenTint} textColor={palette.text} />
-            <SummaryCard value="5" label="Rejection Qty" tint="#dd5360" background={palette.redTint} textColor={palette.text} />
-            <SummaryCard value="28" label="Total Entries" tint="#3687cf" background={palette.blueTint} textColor={palette.text} />
+            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty)} label="Production Qty" tint="#31a779" background={palette.greenTint} textColor={palette.text} />
+            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.rejectionQty)} label="Rejection Qty" tint="#dd5360" background={palette.redTint} textColor={palette.text} />
+            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty + summary.rejectionQty)} label="Total Qty" tint="#3687cf" background={palette.blueTint} textColor={palette.text} />
           </View>
+          {summaryError ? <Text style={[styles.summaryError, { color: palette.muted }]}>{summaryError}</Text> : null}
         </View>
       </ScrollView>
+      <DateTimePickerModal
+        isVisible={datePickerVisible}
+        mode="date"
+        date={selectedDate}
+        maximumDate={new Date()}
+        onConfirm={(date) => {
+          setSelectedDate(date);
+          setDatePickerVisible(false);
+        }}
+        onCancel={() => setDatePickerVisible(false)}
+      />
     </View>
   );
 }
@@ -153,7 +255,14 @@ function SummaryCard({ value, label, tint, background, textColor }: {
   );
 }
 
-function ClassicHome({ fullName }: { fullName: string }) {
+function ClassicHome({ fullName, summary, selectedDate, summaryLoading, summaryError, onDatePress }: {
+  fullName: string;
+  summary: DashboardSummary;
+  selectedDate: Date;
+  summaryLoading: boolean;
+  summaryError: string;
+  onDatePress: () => void;
+}) {
   const { colors } = useAppTheme();
   const router = useRouter();
 
@@ -178,6 +287,22 @@ function ClassicHome({ fullName }: { fullName: string }) {
         <ClassicQuickAction icon="document-text-outline" title="Training form" subtitle="Record a training session" onPress={() => router.push('/trainingForm')} />
         <ClassicQuickAction icon="compass-outline" title="Process guide" subtitle="Review the workflow steps" onPress={() => router.push('/explore')} />
       </View>
+      <View style={classicStyles.summaryHeading}>
+        <Text style={[classicStyles.sectionTitle, styles.classicSummaryTitle, { color: colors.text }]}>Daily Summary</Text>
+        <Pressable onPress={onDatePress} style={[styles.classicSummaryDate, { borderColor: colors.border, backgroundColor: colors.surfaceSolid }]} accessibilityRole="button">
+          <Ionicons name="calendar-outline" size={14} color={colors.accent} />
+          <Text style={[styles.classicSummaryDateText, { color: colors.text }]}>
+            {selectedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+          </Text>
+          <Ionicons name="chevron-down" size={12} color={colors.muted} />
+        </Pressable>
+      </View>
+      <View style={classicStyles.summaryCards}>
+        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty)} label="Production Qty" tint="#31a779" background={colors.accentSoft} textColor={colors.text} />
+        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.rejectionQty)} label="Rejection Qty" tint={colors.danger} background={`${colors.danger}12`} textColor={colors.text} />
+        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty + summary.rejectionQty)} label="Total Qty" tint="#3687cf" background="rgba(54,135,207,0.12)" textColor={colors.text} />
+      </View>
+      {summaryError ? <Text style={[styles.summaryError, { color: colors.muted }]}>{summaryError}</Text> : null}
     </AppScreen>
   );
 }
@@ -259,11 +384,15 @@ const styles = StyleSheet.create({
   summaryHeading: { minHeight: 53, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 9, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
   summaryTitle: { fontSize: 12, fontWeight: '700' },
   summaryDate: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  summaryDateText: { fontSize: 9 },
+  summaryDateText: { fontSize: 10 },
   summaryCards: { flexDirection: 'row', gap: 8 },
   summaryCard: { flex: 1, minHeight: 70, alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 7, paddingHorizontal: 3 },
   summaryValue: { fontSize: 18, fontWeight: '800' },
   summaryLabel: { fontSize: 9, lineHeight: 12, textAlign: 'center', marginTop: 3 },
+  summaryError: { fontSize: 10, lineHeight: 15, marginTop: 8 },
+  classicSummaryTitle: { marginTop: 0, marginBottom: 0 },
+  classicSummaryDate: { minHeight: 38, flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 10 },
+  classicSummaryDateText: { fontSize: 10, fontWeight: '600' },
 });
 
 const classicStyles = StyleSheet.create({
@@ -285,4 +414,6 @@ const classicStyles = StyleSheet.create({
   actionCopy: { flex: 1, gap: 4 },
   actionTitle: { fontSize: 13, fontWeight: '700' },
   actionSubtitle: { fontSize: 11 },
+  summaryHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginTop: 26 },
+  summaryCards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
 });

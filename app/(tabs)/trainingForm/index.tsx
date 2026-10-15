@@ -3,10 +3,12 @@ import { View, Text, TextInput, TouchableOpacity, ScrollView, Animated, Easing, 
 import { FontAwesome } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 const FormScreen = () => {
   const { colors, theme } = useAppTheme();
+  const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const [page, setPage] = useState(1);
   const [fadeAnim] = useState(new Animated.Value(0));
@@ -103,7 +105,7 @@ const FormScreen = () => {
   ];
 
   return (
-    <View style={{ flex: 1, padding: 18, paddingTop: 18, backgroundColor: colors.background }}>
+    <View style={{ flex: 1, padding: 18, paddingTop: insets.top + 10, backgroundColor: colors.background }}>
       <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: fadeAnim }] }}>
         <LinearGradient
           colors={[colors.surfaceSolid, colors.background]}

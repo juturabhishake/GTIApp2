@@ -1,5 +1,6 @@
 import React from 'react';
 import { ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 type AppScreenProps = React.PropsWithChildren<{
@@ -11,10 +12,16 @@ type AppScreenProps = React.PropsWithChildren<{
 
 export function AppScreen({ title, subtitle, contentStyle, showHeading = true, children }: AppScreenProps) {
   const { colors, uiMode } = useAppTheme();
+  const insets = useSafeAreaInsets();
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.content, uiMode === 'modern' && styles.modernContent, contentStyle]}
+      contentContainerStyle={[
+        styles.content,
+        uiMode === 'modern' && styles.modernContent,
+        uiMode === 'modern' && { paddingTop: insets.top + 10 },
+        contentStyle,
+      ]}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.inner}>
@@ -40,8 +47,8 @@ export function GlassPanel({ children, style }: React.PropsWithChildren<{ style?
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 26, paddingBottom: 36 },
-  modernContent: { paddingHorizontal: 16, paddingTop: 28, paddingBottom: 16 },
+  content: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 5, paddingBottom: 36 },
+  modernContent: { paddingHorizontal: 16, paddingBottom: 16 },
   inner: { width: '100%', maxWidth: 1120, alignSelf: 'center' },
   pageHeading: { marginBottom: 20, gap: 6 },
   title: { fontSize: 26, lineHeight: 32, fontWeight: '700', letterSpacing: -0.5 },
