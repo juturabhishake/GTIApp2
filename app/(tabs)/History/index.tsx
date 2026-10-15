@@ -15,7 +15,8 @@ import { useAppTheme } from '@/contexts/ThemeContext';
 type DateField = 'start' | 'end';
 type RejectionRecord = Record<string, unknown>;
 
-const API_BASE_URL = 'http://10.225.51.14:3000';
+const API_BASE_URL = 'https://gtiappsbackend.vercel.app';
+// const API_BASE_URL = 'http://10.225.51.14:3000';
 
 function formatApiDate(date: Date) {
   const year = date.getFullYear();

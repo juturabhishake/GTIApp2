@@ -8,7 +8,8 @@ import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme, type AppTheme } from '@/contexts/ThemeContext';
 
-const API_BASE_URL = 'http://10.225.51.14:3000';
+// const API_BASE_URL = 'http://10.225.51.14:3000';
+const API_BASE_URL = 'https://gtiappsbackend.vercel.app';
 
 type DashboardSummary = {
   productionQty: number;

@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "GTIAppProject",
+    "name": "GTI Production App",
     "slug": "GTIAppProject",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/gti_icon.png",
+    "icon": "./assets/images/image.png",
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "platforms": [
@@ -25,7 +25,7 @@
         "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/gti.png",
+        "foregroundImage": "./assets/images/image.png",
         "backgroundColor": "#ffffff"
       },
       "package": "com.anonymous.GTIAppProject"
