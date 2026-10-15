@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, ActivityIndicator, Modal, StyleSheet, Animated, Alert,
   type StyleProp, type ViewStyle,
@@ -7,6 +7,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Animatable from 'react-native-animatable';
 import DropDownPicker from 'react-native-dropdown-picker';
 import * as SecureStore from 'expo-secure-store';
+import { useFocusEffect } from 'expo-router';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 type RejectOption = {
@@ -39,7 +40,7 @@ const ScannerScreen = () => {
   const [open, setOpen] = useState(false);
   const [rejectOptions, setRejectOptions] = useState<RejectOption[]>([]);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     const fetchRejectOptions = async () => {
       try {
         const response = await fetch('https://gtiappsbackend.vercel.app/api/scanner/rejectOptions');
@@ -54,8 +55,8 @@ const ScannerScreen = () => {
       }
     };
   
-    fetchRejectOptions();
-  }, []);
+    void fetchRejectOptions();
+  }, []));
   
 
   useEffect(() => {

@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import * as SecureStore from 'expo-secure-store';
+import { useFocusEffect } from 'expo-router';
 import { AppScreen } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
@@ -276,20 +277,11 @@ export default function RejectionEntryScreen() {
   const inputWidth = columns === 1 ? '100%' : `${100 / columns - 1.5}%`;
   const actionsInRow = width >= 390;
 
-  useEffect(() => {
-    if (!permission?.granted && permission?.canAskAgain !== false) {
-      requestPermission().catch((error) => {
-        console.error('Unable to request camera permission:', error);
-        setScanError('Camera permission could not be requested. Check app permissions and try again.');
-      });
-    }
-  }, [permission, requestPermission]);
-
   useEffect(() => () => {
     if (submitMessageTimer.current) clearTimeout(submitMessageTimer.current);
   }, []);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     const controller = new AbortController();
     optionTypes.forEach((type) => {
       fetch(getOptionsApiUrl(type), {
@@ -315,7 +307,7 @@ export default function RejectionEntryScreen() {
       });
     });
     return () => controller.abort();
-  }, []);
+  }, []));
 
   const loadPartDetails = useCallback(async (scanned: ScannedPart) => {
     setLookupLoading(true);
@@ -389,6 +381,27 @@ export default function RejectionEntryScreen() {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
+  const startScan = async () => {
+    setScanError('');
+    if (permission?.granted) {
+      setCameraActive(true);
+      return;
+    }
+    try {
+      const result = await requestPermission();
+      if (result.granted) {
+        setCameraActive(true);
+      } else if (!result.canAskAgain) {
+        setScanError('Camera permission is disabled. Enable it in device settings to scan a part.');
+      } else {
+        setScanError('Camera permission is needed to scan a part.');
+      }
+    } catch (error) {
+      console.error('Unable to request camera permission:', error);
+      setScanError('Camera permission could not be requested. Check app permissions and try again.');
+    }
+  };
+
   const resetScan = () => {
     if (submitMessageTimer.current) clearTimeout(submitMessageTimer.current);
     submitMessageTimer.current = null;
@@ -400,7 +413,7 @@ export default function RejectionEntryScreen() {
     setShowDetails(false);
     setForm(initialForm);
     setSubmitMessage('');
-    setCameraActive(true);
+    setCameraActive(false);
   };
 
   const submit = async () => {
@@ -442,7 +455,7 @@ export default function RejectionEntryScreen() {
       setScanError('');
       setShowDetails(false);
       setForm(initialForm);
-      setCameraActive(true);
+      setCameraActive(false);
       setSubmitMessage('Submitted successfully.');
       submitMessageTimer.current = setTimeout(() => {
         setSubmitMessage('');
@@ -465,10 +478,6 @@ export default function RejectionEntryScreen() {
       { key: 'Customer', label: 'Customer', value: findDetail(details, ['Customer']) },
     ].filter((row) => row.value !== '');
   }, [details]);
-
-  useEffect(() => {
-    if (permission?.granted && !part) setCameraActive(true);
-  }, [part, permission?.granted]);
 
   const renderField = (field: FieldDefinition) => {
     const value = form[field.key];
@@ -547,15 +556,17 @@ export default function RejectionEntryScreen() {
       <View style={[styles.scanCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.border }]}>
         <View style={styles.sectionHeading}>
           <View style={[styles.headingIcon, { backgroundColor: colors.accentSoft }]}>
-            <Ionicons name="qr-code-outline" size={21} color={colors.accent} />
+            <Ionicons name={part ? 'cube-outline' : 'qr-code-outline'} size={21} color={colors.accent} />
           </View>
           <View style={styles.headingCopy}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Scan Part Number</Text>
-            <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>Point the camera at the part QR code.</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{part ? 'Part Scanned' : 'Scan Part'}</Text>
+            <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>
+              {part ? 'Review the scanned part and complete the rejection details.' : cameraActive ? 'Point the camera at the part QR code.' : 'Start by scanning the QR code on the part.'}
+            </Text>
           </View>
           {part ? (
-            <Pressable onPress={resetScan} accessibilityRole="button" accessibilityLabel="Scan another part">
-              <Ionicons name="scan-outline" size={22} color={colors.accent} />
+            <Pressable onPress={resetScan} accessibilityRole="button" accessibilityLabel="Return to scan part">
+              <Ionicons name="close-circle-outline" size={22} color={colors.accent} />
             </Pressable>
           ) : null}
         </View>
@@ -572,38 +583,47 @@ export default function RejectionEntryScreen() {
             </View>
             {lookupLoading ? <ActivityIndicator color={colors.accent} /> : null}
           </View>
-        ) : permission?.granted ? (
-          <>
-            {cameraActive ? (
-              <View style={[styles.cameraFrame, { borderColor: colors.border }]}>
-                <CameraView
-                  style={StyleSheet.absoluteFill}
-                  facing="back"
-                  barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-                  onBarcodeScanned={onBarcodeScanned}
-                />
-                <View pointerEvents="none" style={styles.scanOverlay}>
-                  <View style={[styles.scanCorner, styles.scanCornerTopLeft, { borderColor: colors.accent }]} />
-                  <View style={[styles.scanCorner, styles.scanCornerTopRight, { borderColor: colors.accent }]} />
-                  <View style={[styles.scanCorner, styles.scanCornerBottomLeft, { borderColor: colors.accent }]} />
-                  <View style={[styles.scanCorner, styles.scanCornerBottomRight, { borderColor: colors.accent }]} />
-                </View>
-              </View>
-            ) : (
-              <Pressable onPress={() => setCameraActive(true)} style={({ pressed }) => [styles.startScan, { backgroundColor: colors.accent }, pressed && styles.pressed]}>
-                <Ionicons name="scan-outline" size={21} color="#fff" />
-                <Text style={styles.startScanText}>Open Scanner</Text>
-              </Pressable>
-            )}
-          </>
-        ) : permission?.canAskAgain === false ? (
-          <View style={styles.permissionMessage}>
-            <Text style={[styles.errorText, { color: colors.danger }]}>Camera permission is disabled. Enable it in device settings to scan a part.</Text>
+        ) : cameraActive ? (
+          <View style={[styles.cameraFrame, { borderColor: colors.border }]}>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              onBarcodeScanned={onBarcodeScanned}
+            />
+            <View pointerEvents="none" style={styles.scanOverlay}>
+              <View style={[styles.scanCorner, styles.scanCornerTopLeft, { borderColor: colors.accent }]} />
+              <View style={[styles.scanCorner, styles.scanCornerTopRight, { borderColor: colors.accent }]} />
+              <View style={[styles.scanCorner, styles.scanCornerBottomLeft, { borderColor: colors.accent }]} />
+              <View style={[styles.scanCorner, styles.scanCornerBottomRight, { borderColor: colors.accent }]} />
+            </View>
           </View>
         ) : (
-          <View style={styles.permissionMessage}>
-            <ActivityIndicator color={colors.accent} />
-            <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>Requesting camera permission…</Text>
+          <View style={[styles.scanLanding, { backgroundColor: colors.surfaceAlt }]}>
+            <View style={[styles.scanIllustration, { backgroundColor: colors.accentSoft }]}>
+              <Ionicons name="qr-code-outline" size={34} color={colors.accent} />
+            </View>
+            <Pressable onPress={() => void startScan()} style={({ pressed }) => [styles.startScan, { backgroundColor: colors.accent }, pressed && styles.pressed]}>
+              <Ionicons name="scan-outline" size={21} color="#fff" />
+              <Text style={styles.startScanText}>Scan Part</Text>
+            </Pressable>
+            <View style={styles.scanInstructions}>
+              {[
+                { icon: 'scan-outline' as const, text: 'Tap Scan Part and point your camera at the part QR code.' },
+                { icon: 'clipboard-outline' as const, text: 'Check the part details, then fill in the rejection form.' },
+                { icon: 'cloud-upload-outline' as const, text: 'Submit the completed entry to save it.' },
+              ].map((instruction, index) => (
+                <View key={instruction.text} style={styles.scanInstruction}>
+                  <View style={[styles.instructionIcon, { backgroundColor: colors.surfaceSolid }]}>
+                    <Ionicons name={instruction.icon} size={16} color={colors.accent} />
+                  </View>
+                  <Text style={[styles.instructionText, { color: colors.muted }]}>
+                    <Text style={[styles.instructionNumber, { color: colors.text }]}>{index + 1}. </Text>
+                    {instruction.text}
+                  </Text>
+                </View>
+              ))}
+            </View>
           </View>
         )}
 
@@ -782,6 +802,13 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: '700' },
   sectionSubtitle: { fontSize: 11, lineHeight: 16 },
   cameraFrame: { height: 280, overflow: 'hidden', borderWidth: 1, borderRadius: 18, backgroundColor: '#10191e' },
+  scanLanding: { padding: 16, borderRadius: 18 },
+  scanIllustration: { width: 76, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 24, alignSelf: 'center', marginBottom: 16 },
+  scanInstructions: { gap: 13, marginTop: 19 },
+  scanInstruction: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  instructionIcon: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 11 },
+  instructionText: { flex: 1, fontSize: 11, lineHeight: 16 },
+  instructionNumber: { fontWeight: '700' },
   scanOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center' },
   scanCorner: { position: 'absolute', width: 42, height: 42, borderWidth: 4 },
   scanCornerTopLeft: { top: '25%', left: '18%', borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 12 },

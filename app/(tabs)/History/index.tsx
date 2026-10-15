@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
+import { useFocusEffect } from 'expo-router';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
@@ -101,7 +102,7 @@ export default function HistoryScreen() {
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let active = true;
     setLoading(true);
     setError('');
@@ -118,7 +119,7 @@ export default function HistoryScreen() {
     return () => {
       active = false;
     };
-  }, [startDate, endDate, refresh]);
+  }, [startDate, endDate, refresh]));
 
   const chooseDate = (date: Date) => {
     if (activeDate === 'start') {

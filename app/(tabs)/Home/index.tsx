@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
@@ -69,7 +69,7 @@ export default function Home() {
     }).catch((error) => console.error('Unable to load profile name:', error));
   }, []);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let active = true;
     setSummaryLoading(true);
     setSummaryError('');
@@ -86,7 +86,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [selectedDate]);
+  }, [selectedDate]));
 
   if (uiMode === 'classic') {
     return (
