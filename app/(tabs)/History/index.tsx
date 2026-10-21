@@ -156,12 +156,9 @@ export default function HistoryScreen() {
 
       <View style={[styles.tabs, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
         <View style={[styles.activeTab, { backgroundColor: colors.accent }]}>
-          <Text style={styles.activeTabText}>All</Text>
+          <Text style={styles.activeTabText}>All Rejections</Text>
         </View>
-        <View style={[styles.inactiveTab, { borderColor: colors.border }]}>
-          <Text style={[styles.inactiveTabText, { color: colors.muted }]}>Rejection</Text>
-        </View>
-        <Text style={[styles.resultCount, { color: colors.muted }]}>{records.length} {records.length === 1 ? 'entry' : 'entries'}</Text>
+        <Text style={[styles.resultCount, { color: colors.muted }]}>{records.length} total {records.length === 1 ? 'entry' : 'entries'}</Text>
       </View>
 
       {loading ? (
@@ -296,10 +293,8 @@ const styles = StyleSheet.create({
   dateLabel: { fontSize: 10, marginBottom: 3 },
   dateValue: { fontSize: 11, fontWeight: '700' },
   tabs: { flexDirection: 'row', alignItems: 'center', borderRadius: 15, borderWidth: 1, padding: 4, marginBottom: 14 },
-  activeTab: { minWidth: 68, minHeight: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
+  activeTab: { minHeight: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
   activeTabText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  inactiveTab: { minHeight: 34, borderRightWidth: StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 14 },
-  inactiveTabText: { fontSize: 11, fontWeight: '600' },
   resultCount: { fontSize: 10, marginLeft: 'auto', marginRight: 8 },
   stateCard: { minHeight: 210, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 10 },
   stateIcon: { width: 54, height: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 3 },

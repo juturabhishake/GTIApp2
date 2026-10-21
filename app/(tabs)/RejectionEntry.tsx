@@ -25,6 +25,7 @@ const DIMENSIONS_OPTIONS_API_URL = 'https://gtims-quality-control.vercel.app/api
 const BACKEND_BASE_URL = 'https://gtiappsbackend.vercel.app';
 const PART_DETAILS_API_URL = `${BACKEND_BASE_URL}/api/product-matrix/part-details`;
 const REJECTION_SUBMIT_API_URL = `${BACKEND_BASE_URL}/api/rejection/save`;
+const REJECTION_GET_API_URL = `${BACKEND_BASE_URL}/api/rejection/get`;
 
 function getOptionsApiUrl(type: string) {
   return type === 'dimensions' ? DIMENSIONS_OPTIONS_API_URL : OPTIONS_API_URL;
@@ -34,8 +35,9 @@ type SelectOption = { value: string; label: string };
 type FormKey =
   | 'scrapDate' | 'rejectedOn' | 'foundAt' | 'leakCode' | 'shift' | 'shopFloor'
   | 'partName' | 'bhChThIm' | 'op' | 'fixPos' | 'defectType' | 'dimension'
-  | 'actual' | 'qty' | 'operator' | 'leader' | 'decision' | 'reason'
+  | 'actual' | 'qty' | 'operator' | 'leader' | 'decision' | 'reason' | 'returnReason'
   | 'targetDate' | 'status' | 'correctiveAction';
+type EntrySection = 'production' | 'qc';
 type FieldDefinition = {
   key: FormKey;
   label: string;
@@ -58,12 +60,17 @@ const fields: FieldDefinition[] = [
   { key: 'qty', label: 'QTY', kind: 'number', placeholder: 'Enter quantity' },
   { key: 'operator', label: 'Operator', kind: 'select', optionType: 'employees', placeholder: 'Select operator' },
   { key: 'leader', label: 'Leader', kind: 'select', optionType: 'employees', placeholder: 'Select leader' },
-  { key: 'decision', label: 'Decision', kind: 'select', optionType: 'decisions', placeholder: 'Select decision' },
+  { key: 'decision', label: 'Scrap Type', kind: 'select', optionType: 'decisions', placeholder: 'Select scrap type' },
   { key: 'reason', label: 'Reason for Rejection', kind: 'multiline', placeholder: 'Describe the reason for rejection...' },
+  { key: 'returnReason', label: 'Reason for Return', kind: 'multiline', placeholder: 'Describe the reason for return...' },
   { key: 'targetDate', label: 'Target Date', kind: 'date' },
   { key: 'status', label: 'Status', kind: 'select', optionType: 'entryStatuses', placeholder: 'Select status' },
   { key: 'correctiveAction', label: 'Corrective Action', kind: 'multiline', placeholder: 'Describe the corrective action taken...' },
 ];
+
+const qcFieldKeys: FormKey[] = ['scrapDate', 'foundAt', 'returnReason', 'correctiveAction', 'targetDate', 'status'];
+const productionFields = fields.filter((field) => !qcFieldKeys.includes(field.key));
+const qcFields = fields.filter((field) => qcFieldKeys.includes(field.key));
 
 const initialForm: Record<FormKey, string> = {
   scrapDate: '',
@@ -84,6 +91,7 @@ const initialForm: Record<FormKey, string> = {
   leader: '',
   decision: '',
   reason: '',
+  returnReason: '',
   targetDate: '',
   status: '',
   correctiveAction: '',
@@ -95,50 +103,22 @@ const entryStatuses: SelectOption[] = [
   { value: 'close', label: 'Close' },
 ];
 
-type ScannedPart = { partNo: string; productId: string };
+type ScannedPart = { transId: string; partNo: string; serialNo: string; productId?: string };
 
 function formatDate(date: Date) {
   return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
 }
 
 function getQrPart(data: string): ScannedPart | null {
-  const readObject = (value: Record<string, unknown>): ScannedPart | null => {
-    const entries = Object.entries(value);
-    const partNo = entries.find(([key]) => [
-      'partno', 'castpartno', 'machpartno', 'assypartno', 'shippartno', 'partnumber',
-    ].includes(key.replace(/[_\s-]/g, '').toLowerCase()))?.[1];
-    const productId = entries.find(([key]) => ['productid', 'product_id', 'id'].includes(key.replace(/[_\s-]/g, '').toLowerCase()))?.[1];
-    if (partNo != null && productId != null && String(partNo).trim() && String(productId).trim()) {
-      return { partNo: String(partNo).trim(), productId: String(productId).trim() };
-    }
-    return null;
-  };
+  const transId = data.trim();
+  const separator = transId.lastIndexOf('|');
+  if (separator <= 0 || separator === transId.length - 1) return null;
 
-  try {
-    const parsed: unknown = JSON.parse(data);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const part = readObject(parsed as Record<string, unknown>);
-      if (part) return part;
-    }
-  } catch {
-  }
+  const partNo = transId.slice(0, separator).trim();
+  const serialNo = transId.slice(separator + 1).trim();
+  if (!partNo || !serialNo) return null;
 
-  try {
-    const parsedUrl = new URL(data);
-    const partNo = parsedUrl.searchParams.get('partNo') || parsedUrl.searchParams.get('partno');
-    const productId = parsedUrl.searchParams.get('productId') || parsedUrl.searchParams.get('product_id');
-    if (partNo && productId) return { partNo: partNo.trim(), productId: productId.trim() };
-  } catch {
-  }
-
-  const pieces = data.trim().split(/[_|,;\t]/).map((piece) => piece.trim()).filter(Boolean);
-  if (pieces.length >= 2) {
-    const last = pieces[pieces.length - 1];
-    const first = pieces[0];
-    if (/^\d+$/.test(last)) return { partNo: pieces.slice(0, -1).join('_'), productId: last };
-    if (/^\d+$/.test(first)) return { partNo: pieces.slice(1).join('_'), productId: first };
-  }
-  return null;
+  return { transId, partNo, serialNo };
 }
 
 function xmlEscape(value: string) {
@@ -149,15 +129,9 @@ function createRejectionXml(
   part: ScannedPart,
   form: Record<FormKey, string>,
   createdBy: string,
-  details: Record<string, unknown> | null,
 ) {
   const entries = Object.entries(form).map(([key, value]) => `    <${key}>${xmlEscape(value)}</${key}>`).join('\n');
-  const productDetails = details
-    ? `\n  <productDetails>\n${Object.entries(details)
-      .map(([key, value]) => `    <${key}>${xmlEscape(value == null ? '' : String(value))}</${key}>`)
-      .join('\n')}\n  </productDetails>`
-    : '';
-  return `<RejectionEntry>\n  <productId>${xmlEscape(part.productId)}</productId>\n  <partNo>${xmlEscape(part.partNo)}</partNo>\n  <createdBy>${xmlEscape(createdBy)}</createdBy>\n  <form>\n${entries}\n  </form>${productDetails}\n</RejectionEntry>`;
+  return `<RejectionEntry>\n  <productId>${xmlEscape(part.productId || '')}</productId>\n  <partNo>${xmlEscape(part.partNo)}</partNo>\n  <transId>${xmlEscape(part.transId)}</transId>\n  <serialNo>${xmlEscape(part.serialNo)}</serialNo>\n  <createdBy>${xmlEscape(createdBy)}</createdBy>\n  <form>\n${entries}\n  </form>\n</RejectionEntry>`;
 }
 
 function findDetail(details: Record<string, unknown> | null, keys: string[]) {
@@ -252,6 +226,59 @@ async function readPartDetailsResponse(response: Response) {
   return payload;
 }
 
+const rejectionColumnToFormKey: Record<string, FormKey> = {
+  ScrapDate: 'scrapDate',
+  RejectedOn: 'rejectedOn',
+  FoundAt: 'foundAt',
+  LeakCode: 'leakCode',
+  Shift: 'shift',
+  ShopFloor: 'shopFloor',
+  PartName: 'partName',
+  BhChThIm: 'bhChThIm',
+  OP: 'op',
+  FixPos: 'fixPos',
+  DefectType: 'defectType',
+  Dimension: 'dimension',
+  Actual: 'actual',
+  Qty: 'qty',
+  OperatorName: 'operator',
+  LeaderName: 'leader',
+  Decision: 'decision',
+  RejectionReason: 'reason',
+  TargetDate: 'targetDate',
+  Status: 'status',
+  CorrectiveAction: 'correctiveAction',
+  ReturnReason: 'returnReason',
+};
+
+const productionCompleteColumns: string[] = [
+  'RejectedOn', 'LeakCode', 'Shift', 'ShopFloor', 'PartName', 'BhChThIm',
+  'OP', 'FixPos', 'DefectType', 'Dimension', 'Actual', 'Qty',
+  'OperatorName', 'LeaderName', 'Decision', 'RejectionReason',
+];
+
+const qcCompleteColumns: string[] = [
+  'ScrapDate', 'FoundAt', 'ReturnReason', 'CorrectiveAction', 'TargetDate', 'Status',
+];
+
+function isSectionCompleteFromRecord(record: Record<string, unknown>, columns: string[]): boolean {
+  return columns.every((column) => {
+    const value = record[column];
+    return value !== null && value !== undefined && String(value).trim() !== '';
+  });
+}
+
+function rejectionValueToForm(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDate(value);
+  if (typeof value === 'string') {
+    const dateMatch = value.match(/^\s*(\d{4})-(\d{2})-(\d{2})/);
+    if (dateMatch) return `${dateMatch[3]}/${dateMatch[2]}/${dateMatch[1]}`;
+    return value;
+  }
+  return String(value);
+}
+
 export default function RejectionEntryScreen() {
   const { colors } = useAppTheme();
   const { width } = useWindowDimensions();
@@ -269,17 +296,22 @@ export default function RejectionEntryScreen() {
   const [activeSelect, setActiveSelect] = useState<FormKey | null>(null);
   const [optionSearch, setOptionSearch] = useState('');
   const [activeDate, setActiveDate] = useState<FormKey | null>(null);
+  const [activeSection, setActiveSection] = useState<EntrySection>('production');
+  const [completedSections, setCompletedSections] = useState<Record<EntrySection, boolean>>({
+    production: false,
+    qc: false,
+  });
   const [showDetails, setShowDetails] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const scanLock = useRef(false);
-  const submitMessageTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const columns = width >= 1180 ? 4 : width >= 700 ? 2 : 1;
   const inputWidth = columns === 1 ? '100%' : `${100 / columns - 1.5}%`;
   const actionsInRow = width >= 390;
-
-  useEffect(() => () => {
-    if (submitMessageTimer.current) clearTimeout(submitMessageTimer.current);
-  }, []);
+  const allSectionsComplete = completedSections.production && completedSections.qc;
+  const sectionFields = activeSection === 'production' ? productionFields : qcFields;
+  const sectionComplete = completedSections[activeSection];
+  // const formLocked = allSectionsComplete || sectionComplete;
+  const formLocked = allSectionsComplete;
 
   useFocusEffect(useCallback(() => {
     const controller = new AbortController();
@@ -316,21 +348,28 @@ export default function RejectionEntryScreen() {
       const response = await fetch(PART_DETAILS_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ productId: scanned.productId, partNo: scanned.partNo }),
+        body: JSON.stringify({ partNo: scanned.partNo, transId: scanned.transId }),
       });
       const payload = await readPartDetailsResponse(response);
       const record = extractPartDetails(payload);
       if (!record) {
         setDetails(null);
-        setDetailsError(`No Product Matrix details were returned for Product ID ${scanned.productId}.`);
+        setDetailsError(`No Product Matrix details were returned for part number ${scanned.partNo}.`);
+        return;
+      }
+      const productId = findDetail(record, ['Product_Id', 'ProductId']);
+      if (!/^\d+$/.test(productId)) {
+        setDetails(null);
+        setDetailsError(`No valid Product ID was returned for part number ${scanned.partNo}.`);
         return;
       }
       setDetails(record);
+      setPart({ ...scanned, productId });
       setForm((current) => ({
         ...current,
-        partName: findDetail(record, ['Project']),
-        shopFloor: findDetail(record, ['Location', 'ShopFloor', 'FoundAt']),
-        bhChThIm: findDetail(record, ['PartDesc']),
+        partName: String(findDetail(record, ['Project', 'PartName', 'ProductName']) ?? ''),
+        shopFloor: String(findDetail(record, ['Location', 'ShopFloor', 'FoundAt']) ?? ''),
+        bhChThIm: String(findDetail(record, ['PartDesc', 'Description']) ?? ''),
       }));
     } catch (error) {
       console.error('Unable to load scanned part details:', error);
@@ -340,20 +379,75 @@ export default function RejectionEntryScreen() {
     }
   }, []);
 
+  const fetchSavedRejection = useCallback(async (transId: string): Promise<Record<string, unknown>> => {
+    const target = `${REJECTION_GET_API_URL}?transId=${encodeURIComponent(transId)}`;
+    console.log('[RejectionEntry] rejection GET ->', target);
+    const response = await fetch(target, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message = payload && typeof payload === 'object' && 'message' in payload
+        ? String(payload.message)
+        : `Refetch failed (HTTP ${response.status}).`;
+      throw new Error(message);
+    }
+    if (!payload || typeof payload !== 'object' || !('data' in payload) || !payload.data || typeof payload.data !== 'object') {
+      throw new Error('The rejection entry response did not contain a data record.');
+    }
+    console.log('[RejectionEntry] rejection GET response:', payload.data);
+    return payload.data as Record<string, unknown>;
+  }, []);
+
   const onBarcodeScanned = useCallback(({ data }: { data: string }) => {
     if (scanLock.current) return;
     scanLock.current = true;
     setCameraActive(false);
     setScanError('');
+    console.log('[RejectionEntry] raw scan input:', data);
     const scanned = getQrPart(data);
     if (!scanned) {
-      setScanError('QR format was not recognized. It must include partNo and productId.');
+      setScanError('QR format was not recognized. It must be partNo|serialNo.');
       scanLock.current = false;
       return;
     }
+    console.log('[RejectionEntry] scanned part:', scanned);
+    setActiveSection('production');
+    setCompletedSections({ production: false, qc: false });
+    setSubmitMessage('');
+    setForm(initialForm); 
     setPart(scanned);
-    void loadPartDetails(scanned);
-  }, [loadPartDetails]);
+    void (async () => {
+      await loadPartDetails(scanned);
+      try {
+        const saved = await fetchSavedRejection(scanned.transId);
+        console.log('[RejectionEntry] existing RejectionEntry loaded for rescan:', saved);
+        setForm((current) => {
+          const next = { ...current };
+          for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
+            if (saved[column] === undefined || saved[column] === null) continue;
+            const value = rejectionValueToForm(saved[column]);
+            if (value.trim()) next[key] = value;
+          }
+          return next;
+        });
+        const productionDone = isSectionCompleteFromRecord(saved, productionCompleteColumns);
+        const qcDone = isSectionCompleteFromRecord(saved, qcCompleteColumns);
+        setCompletedSections({ production: productionDone, qc: qcDone });
+        setActiveSection(productionDone ? 'qc' : 'production');
+        if (productionDone && qcDone) {
+          setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is fully complete — all inputs are locked.`);
+        } else if (productionDone) {
+          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Now complete the QC tab.`);
+        } else {
+          setSubmitMessage(`Loaded existing RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Review and save if needed.`);
+        }
+      } catch (reloadError) {
+        console.log('[RejectionEntry] no existing RejectionEntry for rescan:', scanned.transId);
+      }
+    })();
+  }, [loadPartDetails, fetchSavedRejection]);
 
   const retryOptions = useCallback(async (type: string) => {
     setOptionErrors((current) => ({ ...current, [type]: '' }));
@@ -381,6 +475,18 @@ export default function RejectionEntryScreen() {
     setForm((current) => ({ ...current, [key]: value }));
   };
 
+  const resetCurrentSection = () => {
+    setForm((current) => {
+      const next = { ...current };
+      sectionFields.forEach((field) => {
+        next[field.key] = '';
+      });
+      return next;
+    });
+    setCompletedSections((current) => ({ ...current, [activeSection]: false }));
+    setSubmitMessage('');
+  };
+
   const startScan = async () => {
     setScanError('');
     if (permission?.granted) {
@@ -403,8 +509,6 @@ export default function RejectionEntryScreen() {
   };
 
   const resetScan = () => {
-    if (submitMessageTimer.current) clearTimeout(submitMessageTimer.current);
-    submitMessageTimer.current = null;
     scanLock.current = false;
     setPart(null);
     setDetails(null);
@@ -413,11 +517,23 @@ export default function RejectionEntryScreen() {
     setShowDetails(false);
     setForm(initialForm);
     setSubmitMessage('');
+    setActiveSection('production');
+    setCompletedSections({ production: false, qc: false });
     setCameraActive(false);
   };
 
-  const submit = async () => {
+  const saveSection = async (section: EntrySection) => {
     if (!part) return;
+    if (!part.productId) {
+      setSubmitMessage('Product ID is missing. Check the Product Matrix lookup before saving.');
+      return;
+    }
+    const requiredFields = section === 'production' ? productionFields : qcFields;
+    const missingField = requiredFields.find((field) => !form[field.key].trim());
+    if (missingField) {
+      setSubmitMessage(`Complete all ${section === 'production' ? 'Production' : 'QC'} fields before saving.`);
+      return;
+    }
     Keyboard.dismiss();
     setSubmitting(true);
     setSubmitMessage('');
@@ -429,12 +545,15 @@ export default function RejectionEntryScreen() {
       if (!username || !employeeId) {
         throw new Error('Could not read the logged-in username and employee ID. Please sign in again.');
       }
+      const xmlPayload = createRejectionXml(part, form, `${username}|${employeeId}`);
+      console.log('[RejectionEntry] save XML payload:', xmlPayload);
       const response = await fetch(REJECTION_SUBMIT_API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/xml; charset=utf-8', Accept: 'application/json' },
-        body: createRejectionXml(part, form, `${username}|${employeeId}`, details),
+        body: xmlPayload,
       });
       const responseText = await response.text();
+      console.log('[RejectionEntry] save response:', responseText);
       let payload: unknown;
       try {
         payload = JSON.parse(responseText);
@@ -444,26 +563,42 @@ export default function RejectionEntryScreen() {
       if (!response.ok) {
         const message = payload && typeof payload === 'object' && 'message' in payload
           ? String(payload.message)
-          : `Submit failed with status ${response.status}.`;
+          : `Save failed with status ${response.status}.`;
         throw new Error(message);
       }
-      if (submitMessageTimer.current) clearTimeout(submitMessageTimer.current);
-      scanLock.current = false;
-      setPart(null);
-      setDetails(null);
-      setDetailsError('');
-      setScanError('');
-      setShowDetails(false);
-      setForm(initialForm);
-      setCameraActive(false);
-      setSubmitMessage('Submitted successfully.');
-      submitMessageTimer.current = setTimeout(() => {
-        setSubmitMessage('');
-        submitMessageTimer.current = null;
-      }, 2500);
+      setCompletedSections((current) => ({ ...current, [section]: true }));
+      setActiveSection('qc');
+
+      if (section === 'production') {
+        const savedTransId = part.transId;
+        if (!savedTransId) {
+          setSubmitMessage('Production saved, but no TransId is available for the refetch.');
+          return;
+        }
+        try {
+          const record = await fetchSavedRejection(savedTransId);
+          const savedEntryId = record.RejectionEntryId;
+          setForm((current) => {
+            const next = { ...current };
+            for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
+              if (record[column] === undefined || record[column] === null) continue;
+              const value = rejectionValueToForm(record[column]);
+              if (value.trim()) next[key] = value;
+            }
+            return next;
+          });
+          setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed from the RejectionEntry table. Now complete the QC tab.`);
+        } catch (refetchError) {
+          console.error('Unable to refresh saved rejection entry:', refetchError);
+          setSubmitMessage(`Production saved, but values could not be refreshed (${refetchError instanceof Error ? refetchError.message : 'unknown error'}).`);
+        }
+        return;
+      }
+
+      setSubmitMessage('QC saved successfully.');
     } catch (error) {
-      console.error('Unable to submit rejection entry:', error);
-      setSubmitMessage(error instanceof Error ? error.message : 'Unable to submit rejection entry.');
+      console.error(`Unable to save rejection ${section} section:`, error);
+      setSubmitMessage(error instanceof Error ? error.message : `Unable to save the ${section} section.`);
     } finally {
       setSubmitting(false);
     }
@@ -481,9 +616,11 @@ export default function RejectionEntryScreen() {
 
   const renderField = (field: FieldDefinition) => {
     const value = form[field.key];
+    const fieldDisabled = formLocked;
     const fieldStyle = [
       styles.fieldControl,
       { borderColor: colors.border, backgroundColor: colors.surfaceSolid },
+      fieldDisabled && styles.disabledField,
     ];
 
     return (
@@ -492,6 +629,7 @@ export default function RejectionEntryScreen() {
         {field.kind === 'select' ? (
           <Pressable
             accessibilityRole="button"
+            disabled={fieldDisabled}
             onPress={() => {
               if (optionErrors[field.optionType || '']) {
                 void retryOptions(field.optionType || '');
@@ -504,7 +642,10 @@ export default function RejectionEntryScreen() {
             <Text numberOfLines={1} style={[styles.controlText, { color: value ? colors.text : colors.muted }]}>
               {value || field.placeholder}
             </Text>
-            {optionErrors[field.optionType || ''] ? (
+            {/* {optionErrors[field.optionType || ''] ? (
+              <Ionicons name="refresh-outline" size={17} color={colors.danger} />
+            ) : ( */}
+            {!fieldDisabled && optionErrors[field.optionType || ''] ? (
               <Ionicons name="refresh-outline" size={17} color={colors.danger} />
             ) : (
               <Ionicons name="chevron-down" size={17} color={colors.muted} />
@@ -512,7 +653,7 @@ export default function RejectionEntryScreen() {
           </Pressable>
         ) : field.kind === 'date' ? (
           <>
-            <Pressable onPress={() => setActiveDate(field.key)} style={({ pressed }) => [fieldStyle, styles.selectControl, pressed && styles.pressed]}>
+            <Pressable disabled={fieldDisabled} onPress={() => setActiveDate(field.key)} style={({ pressed }) => [fieldStyle, styles.selectControl, pressed && styles.pressed]}>
               <Ionicons name="calendar-outline" size={17} color={colors.muted} />
               <Text style={[styles.controlText, { color: value ? colors.text : colors.muted }]}>
                 {value || 'Pick a date'}
@@ -523,6 +664,7 @@ export default function RejectionEntryScreen() {
           <TextInput
             value={value}
             onChangeText={(text) => setField(field.key, text)}
+            editable={!fieldDisabled}
             placeholder={field.placeholder}
             placeholderTextColor={colors.muted}
             keyboardType={field.kind === 'number' ? 'decimal-pad' : 'default'}
@@ -536,7 +678,10 @@ export default function RejectionEntryScreen() {
             ]}
           />
         )}
-        {field.kind === 'select' && optionErrors[field.optionType || ''] ? (
+        {/* {field.kind === 'select' && optionErrors[field.optionType || ''] ? (
+          <Text style={[styles.fieldError, { color: colors.danger }]}>{optionErrors[field.optionType || '']}</Text>
+        ) : null} */}
+        {field.kind === 'select' && !fieldDisabled && optionErrors[field.optionType || ''] ? (
           <Text style={[styles.fieldError, { color: colors.danger }]}>{optionErrors[field.optionType || '']}</Text>
         ) : null}
       </View>
@@ -579,7 +724,7 @@ export default function RejectionEntryScreen() {
             <View style={styles.headingCopy}>
               <Text style={[styles.scannedLabel, { color: colors.muted }]}>PART NUMBER</Text>
               <Text style={[styles.scannedNumber, { color: colors.text }]}>{part.partNo}</Text>
-              <Text style={[styles.scannedMeta, { color: colors.muted }]}>Product ID · {part.productId}</Text>
+              <Text style={[styles.scannedMeta, { color: colors.muted }]}>Serial No · {part.serialNo}</Text>
             </View>
             {lookupLoading ? <ActivityIndicator color={colors.accent} /> : null}
           </View>
@@ -611,7 +756,7 @@ export default function RejectionEntryScreen() {
               {[
                 { icon: 'scan-outline' as const, text: 'Tap Scan Part and point your camera at the part QR code.' },
                 { icon: 'clipboard-outline' as const, text: 'Check the part details, then fill in the rejection form.' },
-                { icon: 'cloud-upload-outline' as const, text: 'Submit the completed entry to save it.' },
+                { icon: 'cloud-upload-outline' as const, text: 'Save Production, then complete and save QC.' },
               ].map((instruction, index) => (
                 <View key={instruction.text} style={styles.scanInstruction}>
                   <View style={[styles.instructionIcon, { backgroundColor: colors.surfaceSolid }]}>
@@ -664,33 +809,77 @@ export default function RejectionEntryScreen() {
             </View>
             <View style={styles.headingCopy}>
               <Text style={[styles.sectionTitle, { color: colors.text }]}>Rejection Details</Text>
-              <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>Complete the fields for this rejection entry.</Text>
+              <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>Save each completed tab; both tabs lock after Production and QC are saved.</Text>
             </View>
           </View>
-          <View style={styles.fieldsGrid}>{fields.map(renderField)}</View>
+          <View style={[styles.entryTabs, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+            {([
+              { key: 'production', label: 'Production' },
+              { key: 'qc', label: 'QC' },
+            ] as const).map((tab) => {
+              const selected = activeSection === tab.key;
+              const complete = completedSections[tab.key];
+              return (
+                <Pressable
+                  key={tab.key}
+                  accessibilityRole="tab"
+                  accessibilityLabel={`${tab.label}, ${complete ? 'completed' : 'pending'}`}
+                  accessibilityState={{ selected, disabled: allSectionsComplete }}
+                  // disabled={allSectionsComplete}
+                  onPress={() => {
+                    setActiveSection(tab.key);
+                    setSubmitMessage('');
+                  }}
+                  style={({ pressed }) => [
+                    styles.entryTab,
+                    selected && { backgroundColor: colors.surfaceSolid },
+                    pressed && !allSectionsComplete && styles.pressed,
+                    allSectionsComplete && styles.disabled,
+                  ]}
+                >
+                  <Text style={[styles.entryTabLabel, { color: selected ? colors.text : colors.muted }]}>{tab.label}</Text>
+                  <Ionicons
+                    name={complete ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={17}
+                    color={complete ? colors.accent : colors.muted}
+                  />
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.fieldsGrid}>{sectionFields.map(renderField)}</View>
           <View style={[styles.formActions, { flexDirection: actionsInRow ? 'row' : 'column' }]}>
-            <Pressable onPress={() => setForm(initialForm)} style={({ pressed }) => [
-              styles.resetButton,
-              actionsInRow ? styles.actionButtonHalf : styles.actionButtonFull,
-              { borderColor: colors.border },
-              pressed && styles.pressed,
-            ]}>
+            <Pressable
+              onPress={resetCurrentSection}
+              disabled={formLocked}
+              style={({ pressed }) => [
+                styles.resetButton,
+                actionsInRow ? styles.actionButtonHalf : styles.actionButtonFull,
+                { borderColor: colors.border },
+                pressed && styles.pressed,
+                formLocked && styles.disabled,
+              ]}
+            >
               <Ionicons name="refresh-outline" size={17} color={colors.muted} />
-              <Text style={[styles.resetButtonText, { color: colors.text }]}>Reset Form</Text>
+              <Text style={[styles.resetButtonText, { color: colors.text }]}>Reset {activeSection === 'production' ? 'Production' : 'QC'}</Text>
             </Pressable>
             <Pressable
-              onPress={() => void submit()}
-              disabled={submitting}
+              onPress={() => void saveSection(activeSection)}
+              disabled={submitting || formLocked || lookupLoading || !part.productId}
               style={({ pressed }) => [
                 styles.submitButton,
                 actionsInRow ? styles.actionButtonHalf : styles.actionButtonFull,
                 { backgroundColor: colors.accent },
                 pressed && styles.pressed,
-                submitting && styles.disabled,
+                (submitting || formLocked || lookupLoading || !part.productId) && styles.disabled,
               ]}
             >
-              {submitting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={styles.submitButtonText}>Submit Rejection</Text>}
-              {!submitting ? <Ionicons name="arrow-forward" size={17} color="#fff" /> : null}
+              {submitting ? <ActivityIndicator color="#fff" size="small" /> : (
+                <Text style={styles.submitButtonText}>
+                  {sectionComplete ? `${activeSection === 'production' ? 'Production' : 'QC'} Saved` : `Save ${activeSection === 'production' ? 'Production' : 'QC'}`}
+                </Text>
+              )}
+              {!submitting ? <Ionicons name={sectionComplete ? 'checkmark-circle-outline' : 'arrow-forward'} size={17} color="#fff" /> : null}
             </Pressable>
           </View>
         </View>
@@ -832,10 +1021,14 @@ const styles = StyleSheet.create({
   detailValue: { fontSize: 11, fontWeight: '600' },
   formCard: { borderWidth: 1, borderRadius: 22, padding: 18, marginBottom: 22 },
   formHeading: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
+  entryTabs: { flexDirection: 'row', gap: 6, padding: 5, borderWidth: 1, borderRadius: 14, marginBottom: 18 },
+  entryTab: { minHeight: 42, flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, borderRadius: 10 },
+  entryTabLabel: { fontSize: 12, fontWeight: '700' },
   fieldsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 15 },
   field: { minWidth: 0 },
   fieldLabel: { fontSize: 11, fontWeight: '700', marginBottom: 7 },
   fieldControl: { minHeight: 44, borderWidth: 1, borderRadius: 11, paddingHorizontal: 12 },
+  disabledField: { opacity: 0.7 },
   selectControl: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 9 },
   controlText: { flex: 1, fontSize: 12 },
   textControl: { paddingVertical: 10, fontSize: 12 },

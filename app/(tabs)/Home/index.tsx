@@ -155,16 +155,6 @@ export default function Home() {
               onPress={() => router.push('/Orders')}
             />
             <DashboardAction
-              icon="bar-chart-outline"
-              title="Production Entry"
-              subtitle="Record completed quantity"
-              tint="#31a779"
-              background={palette.greenTint}
-              textColor={palette.text}
-              mutedColor={palette.muted}
-              onPress={() => router.push('/ProductionEntry')}
-            />
-            <DashboardAction
               icon="close-circle"
               title="Rejection Entry"
               subtitle="Record rejected quantity"

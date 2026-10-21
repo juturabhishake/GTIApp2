@@ -46,7 +46,6 @@ export default function TabLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [entryMenuOpen, setEntryMenuOpen] = useState(false);
   const [sidebarProfileOpen, setSidebarProfileOpen] = useState(false);
   const [fullName, setFullName] = useState('');
   const [employeeId, setEmployeeId] = useState('');
@@ -57,8 +56,6 @@ export default function TabLayout() {
   const sidebarWidth = useRef(new Animated.Value(250)).current;
   const menuOpacity = useRef(new Animated.Value(0)).current;
   const menuScale = useRef(new Animated.Value(0.96)).current;
-  const entryMenuOpacity = useRef(new Animated.Value(0)).current;
-  const entryMenuOffset = useRef(new Animated.Value(20)).current;
   const drawerSlide = useRef(new Animated.Value(-310)).current;
   const drawerBackdropOpacity = useRef(new Animated.Value(0)).current;
 
@@ -115,23 +112,6 @@ export default function TabLayout() {
 
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(entryMenuOpacity, {
-        toValue: entryMenuOpen ? 1 : 0,
-        duration: reduceMotion ? 0 : entryMenuOpen ? 220 : 150,
-        easing: entryMenuOpen ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(entryMenuOffset, {
-        toValue: entryMenuOpen ? 0 : 20,
-        duration: reduceMotion ? 0 : entryMenuOpen ? 240 : 150,
-        easing: entryMenuOpen ? Easing.out(Easing.back(1.15)) : Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [entryMenuOpen, reduceMotion, entryMenuOffset, entryMenuOpacity]);
-
-  useEffect(() => {
-    Animated.parallel([
       Animated.timing(drawerSlide, {
         toValue: drawerOpen ? 0 : -310,
         duration: reduceMotion ? 0 : drawerOpen ? 280 : 300,
@@ -162,7 +142,6 @@ export default function TabLayout() {
     setDrawerOpen(shouldOpenClassicDrawer);
     setProfileOpen(false);
     setSidebarProfileOpen(false);
-    setEntryMenuOpen(false);
   }, [drawerBackdropOpacity, drawerSlide, isWide, uiMode]);
 
   useEffect(() => {
@@ -187,7 +166,6 @@ export default function TabLayout() {
     setDrawerOpen(false);
     setProfileOpen(false);
     setSidebarProfileOpen(false);
-    setEntryMenuOpen(false);
     router.push(path);
   };
 
@@ -220,10 +198,6 @@ export default function TabLayout() {
         setProfileOpen(false);
         return true;
       }
-      if (entryMenuOpen) {
-        setEntryMenuOpen(false);
-        return true;
-      }
       if (isLogin) return false;
       if (isHome) {
         if (credentialsReady && (!fullName || !employeeId)) router.replace('/');
@@ -249,7 +223,7 @@ export default function TabLayout() {
       return true;
     });
     return () => subscription.remove();
-  }, [credentialsReady, employeeId, entryMenuOpen, fullName, isHome, isLogin, profileOpen, router]);
+  }, [credentialsReady, employeeId, fullName, isHome, isLogin, profileOpen, router]);
 
   const renderNavigation = (compact: boolean, mobileDrawer = false) => (
     <View style={styles.navigationLayout}>
@@ -439,7 +413,6 @@ export default function TabLayout() {
       <Tabs screenOptions={{ headerShown: false, tabBarStyle: { display: 'none' } }}>
         <Tabs.Screen name="index" />
         <Tabs.Screen name="Home/index" />
-        <Tabs.Screen name="ProductionEntry/index" />
         <Tabs.Screen name="RejectionEntry" />
         <Tabs.Screen name="Orders/index" />
         <Tabs.Screen name="History/index" />
@@ -459,7 +432,6 @@ export default function TabLayout() {
           <Tabs key={uiMode} screenOptions={{ headerShown: false, tabBarStyle: { display: 'none' } }}>
             <Tabs.Screen name="index" />
             <Tabs.Screen name="Home/index" />
-            <Tabs.Screen name="ProductionEntry/index" />
             <Tabs.Screen name="RejectionEntry" />
             <Tabs.Screen name="Orders/index" />
             <Tabs.Screen name="History/index" />
@@ -499,16 +471,15 @@ export default function TabLayout() {
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={entryMenuOpen ? 'Close entry options' : 'Open production and rejection options'}
-              accessibilityState={{ expanded: entryMenuOpen }}
+              accessibilityLabel="Start rejection entry"
               onPress={() => {
                 setProfileOpen(false);
-                setEntryMenuOpen((open) => !open);
+                navigate('/RejectionEntry');
               }}
               style={({ pressed }) => [styles.modernFooterItem, styles.modernFooterPrimaryItem, pressed && styles.pressed]}
             >
-              <View style={[styles.modernFooterPrimaryAction, { backgroundColor: entryMenuOpen ? colors.accent : '#459CEB', borderColor: colors.surfaceSolid }]}>
-                <Ionicons name={entryMenuOpen ? 'close' : 'add'} size={31} color={colors.surfaceSolid} />
+              <View style={[styles.modernFooterPrimaryAction, { backgroundColor: '#459CEB', borderColor: colors.surfaceSolid }]}>
+                <Ionicons name="add" size={31} color={colors.surfaceSolid} />
               </View>
             </Pressable>
             <Pressable
@@ -536,60 +507,6 @@ export default function TabLayout() {
               </View>
             </Pressable>
           </View>
-        </View>
-
-        <View
-          style={[StyleSheet.absoluteFill, styles.entryMenuLayer, { bottom: 72 + insets.bottom }]}
-          pointerEvents={entryMenuOpen ? 'box-none' : 'none'}
-        >
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setEntryMenuOpen(false)}
-            accessibilityLabel="Close entry options"
-            pointerEvents={entryMenuOpen ? 'auto' : 'none'}
-          />
-          <Animated.View
-            pointerEvents={entryMenuOpen ? 'auto' : 'none'}
-            style={[
-              styles.entryMenu,
-              {
-                backgroundColor: colors.surfaceSolid,
-                borderColor: colors.border,
-                opacity: entryMenuOpacity,
-                transform: [{ translateY: entryMenuOffset }],
-              },
-            ]}
-          >
-            <Text style={[styles.entryMenuTitle, { color: colors.muted }]}>CHOOSE ENTRY</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => navigate('/ProductionEntry')}
-              style={({ pressed }) => [styles.entryMenuOption, { backgroundColor: colors.accentSoft }, pressed && styles.pressed]}
-            >
-              <View style={[styles.entryMenuIcon, { backgroundColor: colors.surfaceSolid }]}>
-                <Ionicons name="bar-chart-outline" size={19} color={colors.accent} />
-              </View>
-              <View style={styles.entryMenuCopy}>
-                <Text style={[styles.entryMenuOptionTitle, { color: colors.text }]}>Production Entry</Text>
-                <Text style={[styles.entryMenuOptionSubtitle, { color: colors.muted }]}>Record completed quantity</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={17} color={colors.muted} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => navigate('/RejectionEntry')}
-              style={({ pressed }) => [styles.entryMenuOption, { backgroundColor: colors.surfaceAlt }, pressed && styles.pressed]}
-            >
-              <View style={[styles.entryMenuIcon, { backgroundColor: colors.surfaceSolid }]}>
-                <Ionicons name="close-circle-outline" size={19} color={colors.danger} />
-              </View>
-              <View style={styles.entryMenuCopy}>
-                <Text style={[styles.entryMenuOptionTitle, { color: colors.text }]}>Rejection Entry</Text>
-                <Text style={[styles.entryMenuOptionSubtitle, { color: colors.muted }]}>Record rejected quantity</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={17} color={colors.muted} />
-            </Pressable>
-          </Animated.View>
         </View>
 
         <View style={[StyleSheet.absoluteFill, styles.modernProfileLayer, { bottom: 72 + insets.bottom }]} pointerEvents={profileOpen ? 'auto' : 'none'}>
@@ -649,7 +566,6 @@ export default function TabLayout() {
           <Tabs key={uiMode} screenOptions={{ headerShown: false, tabBarStyle: { display: 'none' } }}>
             <Tabs.Screen name="index" />
             <Tabs.Screen name="Home/index" />
-            <Tabs.Screen name="ProductionEntry/index" />
             <Tabs.Screen name="RejectionEntry" />
             <Tabs.Screen name="Orders/index" />
             <Tabs.Screen name="History/index" />
@@ -773,14 +689,6 @@ const styles = StyleSheet.create({
   sidebarProfileAction: { minHeight: 39 },
   profileLayer: { zIndex: 10, alignItems: 'flex-end' },
   modernProfileLayer: { zIndex: 10, alignItems: 'flex-end' },
-  entryMenuLayer: { zIndex: 11, alignItems: 'center', justifyContent: 'flex-end' },
-  entryMenu: { width: '100%', maxWidth: 380, marginBottom: 12, padding: 14, borderWidth: 1, borderRadius: 22, shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 20, shadowOffset: { width: 0, height: 8 }, elevation: 14 },
-  entryMenuTitle: { fontSize: 9, fontWeight: '700', letterSpacing: 1.2, marginBottom: 10, marginLeft: 3 },
-  entryMenuOption: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 11, paddingVertical: 8, borderRadius: 17, marginTop: 7 },
-  entryMenuIcon: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 13 },
-  entryMenuCopy: { flex: 1, gap: 3 },
-  entryMenuOptionTitle: { fontSize: 12, fontWeight: '700' },
-  entryMenuOptionSubtitle: { fontSize: 10 },
   profileMenu: { position: 'absolute', top: 62, right: 14, width: 310, maxWidth: '92%', borderRadius: 20, borderWidth: 1, padding: 16, shadowColor: '#000', shadowOpacity: 0.16, shadowRadius: 24, shadowOffset: { width: 0, height: 12 }, elevation: 12 },
   modernProfileMenu: { top: undefined, bottom: 8, maxWidth: '100%' },
   profileSummary: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingBottom: 15, marginBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
