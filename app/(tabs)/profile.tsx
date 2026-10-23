@@ -17,7 +17,7 @@ import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 export default function ProfileScreen() {
-  const [profile, setProfile] = useState({ name: '', empid: '' });
+  const [profile, setProfile] = useState({ name: '', empid: '', department: '', position: '', accessType: '' });
   const [modalVisible, setModalVisible] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -28,11 +28,18 @@ export default function ProfileScreen() {
     const fetchData = async () => {
       const name = await SecureStore.getItemAsync('full_name');
       const empid = await SecureStore.getItemAsync('employee_id');
-      const phone = await SecureStore.getItemAsync('phone');
-      const location = await SecureStore.getItemAsync('location');
-      const company = await SecureStore.getItemAsync('company');
 
-      setProfile({ name: name || '', empid: empid || '' });
+      const dept = (await SecureStore.getItemAsync('department')) || (await SecureStore.getItemAsync('tped'));
+      const pos = (await SecureStore.getItemAsync('position')) || (await SecureStore.getItemAsync('sop'));
+      const logintype = (await SecureStore.getItemAsync('logintype')) || (await SecureStore.getItemAsync('tl'));
+
+      setProfile({
+        name: name || '',
+        empid: empid || '',
+        department: dept || '',
+        position: pos || '',
+        accessType: logintype || '',
+      });
     };
     fetchData();
   }, []);
@@ -91,6 +98,21 @@ export default function ProfileScreen() {
             <Ionicons name="card-outline" size={18} color={colors.muted} />
             <Text style={[styles.detailLabel, { color: colors.muted }]}>Employee ID</Text>
             <Text style={[styles.detailValue, { color: colors.text }]}>{profile.empid || '—'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="business-outline" size={18} color={colors.muted} />
+            <Text style={[styles.detailLabel, { color: colors.muted }]}>Department</Text>
+            <Text style={[styles.detailValue, { color: colors.text }]}>{profile.department || '—'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="briefcase-outline" size={18} color={colors.muted} />
+            <Text style={[styles.detailLabel, { color: colors.muted }]}>Position</Text>
+            <Text style={[styles.detailValue, { color: colors.text }]}>{profile.position || '—'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="shield-checkmark-outline" size={18} color={colors.muted} />
+            <Text style={[styles.detailLabel, { color: colors.muted }]}>Access Type</Text>
+            <Text style={[styles.detailValue, { color: colors.accent, fontWeight: '700', textTransform: 'uppercase' }]}>{profile.accessType || '—'}</Text>
           </View>
         </View>
         <Pressable

@@ -303,6 +303,7 @@ export default function RejectionEntryScreen() {
   });
   const [showDetails, setShowDetails] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [loginType, setLoginType] = useState('');
   const scanLock = useRef(false);
   const columns = width >= 1180 ? 4 : width >= 700 ? 2 : 1;
   const inputWidth = columns === 1 ? '100%' : `${100 / columns - 1.5}%`;
@@ -310,8 +311,41 @@ export default function RejectionEntryScreen() {
   const allSectionsComplete = completedSections.production && completedSections.qc;
   const sectionFields = activeSection === 'production' ? productionFields : qcFields;
   const sectionComplete = completedSections[activeSection];
-  // const formLocked = allSectionsComplete || sectionComplete;
-  const formLocked = allSectionsComplete;
+
+  const isAdmin = loginType === 'admin';
+  const isProd = loginType === 'prod';
+  const isQC = loginType === 'qc';
+
+  const canEditSection = useCallback((section: EntrySection) => {
+    if (isAdmin) return true;
+    if (allSectionsComplete) return false;
+    if (isProd) return section === 'production';
+    if (isQC) return section === 'qc';
+    return true;
+  }, [isAdmin, allSectionsComplete, isProd, isQC]);
+
+  const isCurrentSectionEditable = canEditSection(activeSection);
+  const formLocked = !isCurrentSectionEditable;
+
+  useEffect(() => {
+    SecureStore.getItemAsync('logintype').then(async (val) => {
+      const resolved = val || (await SecureStore.getItemAsync('tl'));
+      const type = (resolved || '').trim().toLowerCase();
+      setLoginType(type);
+      if (type === 'qc') {
+        setActiveSection('qc');
+      }
+    }).catch(() => {});
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      SecureStore.getItemAsync('logintype').then(async (val) => {
+        const resolved = val || (await SecureStore.getItemAsync('tl'));
+        if (resolved) setLoginType(resolved.trim().toLowerCase());
+      }).catch(() => {});
+    }, [])
+  );
 
   useFocusEffect(useCallback(() => {
     const controller = new AbortController();
@@ -413,7 +447,7 @@ export default function RejectionEntryScreen() {
       return;
     }
     console.log('[RejectionEntry] scanned part:', scanned);
-    setActiveSection('production');
+    setActiveSection(isQC ? 'qc' : 'production');
     setCompletedSections({ production: false, qc: false });
     setSubmitMessage('');
     setForm(initialForm); 
@@ -435,11 +469,25 @@ export default function RejectionEntryScreen() {
         const productionDone = isSectionCompleteFromRecord(saved, productionCompleteColumns);
         const qcDone = isSectionCompleteFromRecord(saved, qcCompleteColumns);
         setCompletedSections({ production: productionDone, qc: qcDone });
-        setActiveSection(productionDone ? 'qc' : 'production');
+        if (isQC) {
+          setActiveSection('qc');
+        } else if (isProd) {
+          setActiveSection('production');
+        } else {
+          setActiveSection(productionDone && !qcDone ? 'qc' : 'production');
+        }
         if (productionDone && qcDone) {
-          setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is fully complete — all inputs are locked.`);
+          if (isAdmin) {
+            setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is complete — Admin edit access enabled.`);
+          } else {
+            setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is fully complete — all inputs are locked.`);
+          }
         } else if (productionDone) {
-          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Now complete the QC tab.`);
+          if (isProd) {
+            setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). QC tab is view-only.`);
+          } else {
+            setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Now complete the QC tab.`);
+          }
         } else {
           setSubmitMessage(`Loaded existing RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Review and save if needed.`);
         }
@@ -447,7 +495,7 @@ export default function RejectionEntryScreen() {
         console.log('[RejectionEntry] no existing RejectionEntry for rescan:', scanned.transId);
       }
     })();
-  }, [loadPartDetails, fetchSavedRejection]);
+  }, [loadPartDetails, fetchSavedRejection, isAdmin, isProd, isQC]);
 
   const retryOptions = useCallback(async (type: string) => {
     setOptionErrors((current) => ({ ...current, [type]: '' }));
@@ -476,6 +524,7 @@ export default function RejectionEntryScreen() {
   };
 
   const resetCurrentSection = () => {
+    if (!isCurrentSectionEditable) return;
     setForm((current) => {
       const next = { ...current };
       sectionFields.forEach((field) => {
@@ -517,13 +566,17 @@ export default function RejectionEntryScreen() {
     setShowDetails(false);
     setForm(initialForm);
     setSubmitMessage('');
-    setActiveSection('production');
+    setActiveSection(isQC ? 'qc' : 'production');
     setCompletedSections({ production: false, qc: false });
     setCameraActive(false);
   };
 
   const saveSection = async (section: EntrySection) => {
     if (!part) return;
+    if (!canEditSection(section)) {
+      setSubmitMessage(`You have view-only access to the ${section === 'production' ? 'Production' : 'QC'} tab.`);
+      return;
+    }
     if (!part.productId) {
       setSubmitMessage('Product ID is missing. Check the Product Matrix lookup before saving.');
       return;
@@ -587,7 +640,11 @@ export default function RejectionEntryScreen() {
             }
             return next;
           });
-          setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed from the RejectionEntry table. Now complete the QC tab.`);
+          if (isProd) {
+            setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed. QC tab is view-only for Production.`);
+          } else {
+            setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed from the RejectionEntry table. Now complete the QC tab.`);
+          }
         } catch (refetchError) {
           console.error('Unable to refresh saved rejection entry:', refetchError);
           setSubmitMessage(`Production saved, but values could not be refreshed (${refetchError instanceof Error ? refetchError.message : 'unknown error'}).`);
@@ -642,11 +699,11 @@ export default function RejectionEntryScreen() {
             <Text numberOfLines={1} style={[styles.controlText, { color: value ? colors.text : colors.muted }]}>
               {value || field.placeholder}
             </Text>
-            {/* {optionErrors[field.optionType || ''] ? (
-              <Ionicons name="refresh-outline" size={17} color={colors.danger} />
-            ) : ( */}
+
+
             {!fieldDisabled && optionErrors[field.optionType || ''] ? (
               <Ionicons name="refresh-outline" size={17} color={colors.danger} />
+
             ) : (
               <Ionicons name="chevron-down" size={17} color={colors.muted} />
             )}
@@ -678,11 +735,12 @@ export default function RejectionEntryScreen() {
             ]}
           />
         )}
-        {/* {field.kind === 'select' && optionErrors[field.optionType || ''] ? (
-          <Text style={[styles.fieldError, { color: colors.danger }]}>{optionErrors[field.optionType || '']}</Text>
-        ) : null} */}
+
+
+
         {field.kind === 'select' && !fieldDisabled && optionErrors[field.optionType || ''] ? (
           <Text style={[styles.fieldError, { color: colors.danger }]}>{optionErrors[field.optionType || '']}</Text>
+
         ) : null}
       </View>
     );
@@ -766,6 +824,7 @@ export default function RejectionEntryScreen() {
                     <Text style={[styles.instructionNumber, { color: colors.text }]}>{index + 1}. </Text>
                     {instruction.text}
                   </Text>
+
                 </View>
               ))}
             </View>
@@ -819,13 +878,14 @@ export default function RejectionEntryScreen() {
             ] as const).map((tab) => {
               const selected = activeSection === tab.key;
               const complete = completedSections[tab.key];
+              const tabEditable = canEditSection(tab.key);
               return (
                 <Pressable
                   key={tab.key}
                   accessibilityRole="tab"
                   accessibilityLabel={`${tab.label}, ${complete ? 'completed' : 'pending'}`}
                   accessibilityState={{ selected, disabled: allSectionsComplete }}
-                  // disabled={allSectionsComplete}
+
                   onPress={() => {
                     setActiveSection(tab.key);
                     setSubmitMessage('');
@@ -837,7 +897,16 @@ export default function RejectionEntryScreen() {
                     allSectionsComplete && styles.disabled,
                   ]}
                 >
-                  <Text style={[styles.entryTabLabel, { color: selected ? colors.text : colors.muted }]}>{tab.label}</Text>
+                  <Ionicons
+                    name={tabEditable ? 'create-outline' : 'eye-outline'}
+                    size={16}
+                    color={tabEditable ? (selected ? colors.accent : colors.muted) : colors.muted}
+                  />
+
+                  <Text style={[styles.entryTabLabel, { color: selected ? colors.text : colors.muted }]}>
+                    {tab.label}
+                  </Text>
+
                   <Ionicons
                     name={complete ? 'checkmark-circle' : 'ellipse-outline'}
                     size={17}
@@ -869,17 +938,21 @@ export default function RejectionEntryScreen() {
               style={({ pressed }) => [
                 styles.submitButton,
                 actionsInRow ? styles.actionButtonHalf : styles.actionButtonFull,
-                { backgroundColor: colors.accent },
+                { backgroundColor: formLocked ? colors.muted : colors.accent },
                 pressed && styles.pressed,
                 (submitting || formLocked || lookupLoading || !part.productId) && styles.disabled,
               ]}
             >
               {submitting ? <ActivityIndicator color="#fff" size="small" /> : (
                 <Text style={styles.submitButtonText}>
-                  {sectionComplete ? `${activeSection === 'production' ? 'Production' : 'QC'} Saved` : `Save ${activeSection === 'production' ? 'Production' : 'QC'}`}
+                  {formLocked
+                    ? 'View Only'
+                    : sectionComplete
+                    ? `${activeSection === 'production' ? 'Production' : 'QC'} Saved`
+                    : `Save ${activeSection === 'production' ? 'Production' : 'QC'}`}
                 </Text>
               )}
-              {!submitting ? <Ionicons name={sectionComplete ? 'checkmark-circle-outline' : 'arrow-forward'} size={17} color="#fff" /> : null}
+              {!submitting && !formLocked ? <Ionicons name={sectionComplete ? 'checkmark-circle-outline' : 'arrow-forward'} size={17} color="#fff" /> : null}
             </Pressable>
           </View>
         </View>

@@ -62,13 +62,42 @@ export default function LoginScreen() {
       const data = await response.json();
 
       if (response.ok && data.message === "Login Success") {
-        await SecureStore.setItemAsync("employee_id", data.data.EmployeeId);
-        await SecureStore.setItemAsync("full_name", data.data.Username);
+
+
+
+        const toStr = (val: unknown) => (val === null || val === undefined ? '' : String(val));
+        const empId = toStr(data.data.EmployeeId || empID);
+        const uName = toStr(data.data.Username);
+        const uId = toStr(data.data.UserID);
+        const dept = toStr(data.data.Department);
+        const pos = toStr(data.data.Position);
+        const sec = toStr(data.data.Section);
+        const lType = toStr(data.data.logintype);
+
+        await SecureStore.setItemAsync("employee_id", empId);
+        await SecureStore.setItemAsync("full_name", uName);
         await SecureStore.setItemAsync("password", password);
+
+        await SecureStore.setItemAsync("user_id", uId);
+        await SecureStore.setItemAsync("department", dept);
+        await SecureStore.setItemAsync("position", pos);
+        await SecureStore.setItemAsync("section", sec);
+        await SecureStore.setItemAsync("logintype", lType);
+        await SecureStore.setItemAsync("tped", dept);
+        await SecureStore.setItemAsync("sop", pos);
+        await SecureStore.setItemAsync("ces", sec);
+        await SecureStore.setItemAsync("tl", lType);
+
+
+
         console.log("Login successful, redirecting to profile...");
         console.log("Employee ID:", data.data.EmployeeId);
         console.log("Full Name:", data.data.Username);
-        // alert("🎉 Login Success!");
+        console.log("Department:", data.data.Department);
+        console.log("Position:", data.data.Position);
+        console.log("Section:", data.data.Section);
+        console.log("Login Type:", data.data.logintype);
+
         router.replace('/Home');
         setLoading(false);
       } else {

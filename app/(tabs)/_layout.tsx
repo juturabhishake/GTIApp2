@@ -180,6 +180,15 @@ export default function TabLayout() {
         SecureStore.deleteItemAsync('employee_id'),
         SecureStore.deleteItemAsync('full_name'),
         SecureStore.deleteItemAsync('password'),
+        SecureStore.deleteItemAsync('user_id'),
+        SecureStore.deleteItemAsync('department'),
+        SecureStore.deleteItemAsync('position'),
+        SecureStore.deleteItemAsync('section'),
+        SecureStore.deleteItemAsync('logintype'),
+        SecureStore.deleteItemAsync('tped'),
+        SecureStore.deleteItemAsync('sop'),
+        SecureStore.deleteItemAsync('ces'),
+        SecureStore.deleteItemAsync('tl'),
       ]);
       setFullName('');
       setEmployeeId('');
