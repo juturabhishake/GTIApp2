@@ -401,6 +401,7 @@ export default function RejectionEntryScreen() {
       setPart({ ...scanned, productId });
       setForm((current) => ({
         ...current,
+        leakCode: `${scanned.partNo}|${scanned.serialNo}`,
         partName: String(findDetail(record, ['Project', 'PartName', 'ProductName']) ?? ''),
         shopFloor: String(findDetail(record, ['Location', 'ShopFloor', 'FoundAt']) ?? ''),
         bhChThIm: String(findDetail(record, ['PartDesc', 'Description']) ?? ''),
@@ -450,7 +451,7 @@ export default function RejectionEntryScreen() {
     setActiveSection(isQC ? 'qc' : 'production');
     setCompletedSections({ production: false, qc: false });
     setSubmitMessage('');
-    setForm(initialForm); 
+    setForm({ ...initialForm, leakCode: `${scanned.partNo}|${scanned.serialNo}` }); 
     setPart(scanned);
     void (async () => {
       await loadPartDetails(scanned);
@@ -464,6 +465,7 @@ export default function RejectionEntryScreen() {
             const value = rejectionValueToForm(saved[column]);
             if (value.trim()) next[key] = value;
           }
+          next.leakCode = `${scanned.partNo}|${scanned.serialNo}`;
           return next;
         });
         const productionDone = isSectionCompleteFromRecord(saved, productionCompleteColumns);
@@ -528,7 +530,11 @@ export default function RejectionEntryScreen() {
     setForm((current) => {
       const next = { ...current };
       sectionFields.forEach((field) => {
-        next[field.key] = '';
+        if (field.key === 'leakCode' && part) {
+          next[field.key] = `${part.partNo}|${part.serialNo}`;
+        } else {
+          next[field.key] = '';
+        }
       });
       return next;
     });
@@ -598,7 +604,11 @@ export default function RejectionEntryScreen() {
       if (!username || !employeeId) {
         throw new Error('Could not read the logged-in username and employee ID. Please sign in again.');
       }
-      const xmlPayload = createRejectionXml(part, form, `${username}|${employeeId}`);
+      const formPayload = {
+        ...form,
+        leakCode: `${part.partNo}|${part.serialNo}`,
+      };
+      const xmlPayload = createRejectionXml(part, formPayload, `${username}|${employeeId}`);
       console.log('[RejectionEntry] save XML payload:', xmlPayload);
       const response = await fetch(REJECTION_SUBMIT_API_URL, {
         method: 'POST',
@@ -672,8 +682,9 @@ export default function RejectionEntryScreen() {
   }, [details]);
 
   const renderField = (field: FieldDefinition) => {
-    const value = form[field.key];
-    const fieldDisabled = formLocked;
+    const isAlwaysDisabled = field.key === 'leakCode';
+    const value = isAlwaysDisabled && part ? `${part.partNo}|${part.serialNo}` : form[field.key];
+    const fieldDisabled = isAlwaysDisabled || formLocked;
     const fieldStyle = [
       styles.fieldControl,
       { borderColor: colors.border, backgroundColor: colors.surfaceSolid },
@@ -720,7 +731,9 @@ export default function RejectionEntryScreen() {
         ) : (
           <TextInput
             value={value}
-            onChangeText={(text) => setField(field.key, text)}
+            onChangeText={(text) => {
+              if (field.key !== 'leakCode') setField(field.key, text);
+            }}
             editable={!fieldDisabled}
             placeholder={field.placeholder}
             placeholderTextColor={colors.muted}

@@ -11,13 +11,13 @@ import { Ionicons } from '@expo/vector-icons';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { useFocusEffect } from 'expo-router';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
+import { ExportExcelButton } from '@/components/ExportExcelButton';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 type DateField = 'start' | 'end';
 type RejectionRecord = Record<string, unknown>;
 
 const API_BASE_URL = 'https://gtiappsbackend.vercel.app';
-// const API_BASE_URL = 'http://10.225.51.14:3000';
 
 function formatApiDate(date: Date) {
   const year = date.getFullYear();
@@ -135,31 +135,43 @@ export default function HistoryScreen() {
   const compact = width < 380;
 
   return (
-    <AppScreen title="Transaction History" subtitle="Review rejection entries submitted during the selected dates.">
-      <View style={styles.filters}>
-        <DateRangeButton
-          label="From"
-          date={startDate}
-          icon="calendar-outline"
-          compact={compact}
-          onPress={() => setActiveDate('start')}
-        />
-        <Ionicons name="arrow-forward" size={16} color={colors.muted} />
-        <DateRangeButton
-          label="To"
-          date={endDate}
-          icon="calendar-outline"
-          compact={compact}
-          onPress={() => setActiveDate('end')}
-        />
-      </View>
+    <AppScreen
+      title="Transaction History"
+      subtitle="Review rejection entries submitted during the selected dates."
+      stickyHeader={
+        <>
+          <View style={styles.filters}>
+            <DateRangeButton
+              label="From"
+              date={startDate}
+              icon="calendar-outline"
+              compact={compact}
+              onPress={() => setActiveDate('start')}
+            />
+            <Ionicons name="arrow-forward" size={16} color={colors.muted} />
+            <DateRangeButton
+              label="To"
+              date={endDate}
+              icon="calendar-outline"
+              compact={compact}
+              onPress={() => setActiveDate('end')}
+            />
+          </View>
 
-      <View style={[styles.tabs, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
-        <View style={[styles.activeTab, { backgroundColor: colors.accent }]}>
-          <Text style={styles.activeTabText}>All Rejections</Text>
-        </View>
-        <Text style={[styles.resultCount, { color: colors.muted }]}>{records.length} total {records.length === 1 ? 'entry' : 'entries'}</Text>
-      </View>
+          <View style={[styles.tabs, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+            <View style={[styles.activeTab, { backgroundColor: colors.accent }]}>
+              <Text style={styles.activeTabText}>All Rejections</Text>
+            </View>
+            <View style={styles.tabsRight}>
+              {records.length > 0 ? (
+                <ExportExcelButton records={records} startDate={startDate} endDate={endDate} />
+              ) : null}
+              <Text style={[styles.resultCount, { color: colors.muted }]}>{records.length} total {records.length === 1 ? 'entry' : 'entries'}</Text>
+            </View>
+          </View>
+        </>
+      }
+    >
 
       {loading ? (
         <GlassPanel style={styles.stateCard}>
@@ -295,7 +307,8 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: 'row', alignItems: 'center', borderRadius: 15, borderWidth: 1, padding: 4, marginBottom: 14 },
   activeTab: { minHeight: 34, borderRadius: 11, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 },
   activeTabText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  resultCount: { fontSize: 10, marginLeft: 'auto', marginRight: 8 },
+  tabsRight: { flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 'auto', marginRight: 8 },
+  resultCount: { fontSize: 10 },
   stateCard: { minHeight: 210, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 10 },
   stateIcon: { width: 54, height: 54, borderRadius: 18, alignItems: 'center', justifyContent: 'center', marginBottom: 3 },
   stateTitle: { fontSize: 16, fontWeight: '700', textAlign: 'center' },

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, TextInput, Text, TouchableOpacity,
-  ActivityIndicator, StyleSheet, ImageBackground, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Image
+  ActivityIndicator, StyleSheet, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Image
 } from 'react-native';
 import * as Animatable from 'react-native-animatable';
 import * as SecureStore from 'expo-secure-store';
@@ -15,7 +15,7 @@ export default function LoginScreen() {
   const [secureText, setSecureText] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorAnim, setErrorAnim] = useState(false);
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
 
   const router = useRouter();
   const { colors, theme } = useAppTheme();
@@ -111,11 +111,13 @@ export default function LoginScreen() {
   };
 
   return (
-    <ImageBackground
-      source={require('@/assets/images/track2.png')}
-      style={styles.container}
-      blurRadius={6}
-    >
+    <View style={styles.container}>
+      <Image
+        source={require('@/assets/images/track2.png')}
+        style={[StyleSheet.absoluteFill, styles.bgImage]}
+        resizeMode="cover"
+        blurRadius={6}
+      />
       <View style={[StyleSheet.absoluteFill, { backgroundColor: theme === 'dark' ? 'rgba(7,17,22,0.76)' : 'rgba(15,36,38,0.44)' }]} />
       <KeyboardAvoidingView
         style={styles.keyboard}
@@ -194,7 +196,7 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
-    </ImageBackground>
+    </View>
   );
 }
 
@@ -202,6 +204,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     marginTop: 5,
+  },
+  bgImage: {
+    width: '100%',
+    height: '100%',
   },
   keyboard: {
     flex: 1,

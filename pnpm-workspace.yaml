@@ -1,7 +1,10 @@
 allowBuilds:
+  '@parcel/watcher': true
   '@prisma/client': true
   react-native-elements: true
   unrs-resolver: true
+overrides:
+  '@expo/dom-webview': '~58.0.2'
 minimumReleaseAge: 0
 minimumReleaseAgeExclude:
   - '@expo/cli@57.0.28'

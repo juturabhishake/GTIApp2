@@ -8,18 +8,60 @@ type AppScreenProps = React.PropsWithChildren<{
   subtitle?: string;
   contentStyle?: ViewStyle;
   showHeading?: boolean;
+  stickyHeader?: React.ReactNode;
 }>;
 
-export function AppScreen({ title, subtitle, contentStyle, showHeading = true, children }: AppScreenProps) {
+export function AppScreen({
+  title,
+  subtitle,
+  contentStyle,
+  showHeading = true,
+  stickyHeader,
+  children,
+}: AppScreenProps) {
   const { colors, uiMode } = useAppTheme();
   const insets = useSafeAreaInsets();
+
+  if (uiMode === 'modern') {
+    const hasHeader = showHeading || !!stickyHeader;
+    return (
+      <View style={[styles.modernContainer, { backgroundColor: colors.background }]}>
+        {hasHeader ? (
+          <View style={[styles.modernStickyHeader, { backgroundColor: colors.background, paddingTop: insets.top + 10 }]}>
+            <View style={styles.inner}>
+              {showHeading && (
+                <View style={[styles.pageHeading, styles.modernHeading]}>
+                  <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+                  {!!subtitle && <Text style={[styles.subtitle, { color: colors.muted }]}>{subtitle}</Text>}
+                </View>
+              )}
+              {stickyHeader}
+            </View>
+          </View>
+        ) : null}
+        <ScrollView
+          style={{ flex: 1, backgroundColor: colors.background }}
+          contentContainerStyle={[
+            styles.content,
+            styles.modernContent,
+            !hasHeader && { paddingTop: insets.top + 10 },
+            contentStyle,
+          ]}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.inner}>
+            {children}
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={[
         styles.content,
-        uiMode === 'modern' && styles.modernContent,
-        uiMode === 'modern' && { paddingTop: insets.top + 10 },
         contentStyle,
       ]}
       showsVerticalScrollIndicator={false}
@@ -31,6 +73,7 @@ export function AppScreen({ title, subtitle, contentStyle, showHeading = true, c
             {!!subtitle && <Text style={[styles.subtitle, { color: colors.muted }]}>{subtitle}</Text>}
           </View>
         )}
+        {stickyHeader}
         {children}
       </View>
     </ScrollView>
@@ -47,8 +90,11 @@ export function GlassPanel({ children, style }: React.PropsWithChildren<{ style?
 }
 
 const styles = StyleSheet.create({
+  modernContainer: { flex: 1 },
+  modernStickyHeader: { paddingHorizontal: 16, paddingBottom: 6 },
+  modernHeading: { marginBottom: 12 },
   content: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 5, paddingBottom: 36 },
-  modernContent: { paddingHorizontal: 16, paddingBottom: 16 },
+  modernContent: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 24 },
   inner: { width: '100%', maxWidth: 1120, alignSelf: 'center' },
   pageHeading: { marginBottom: 20, gap: 6 },
   title: { fontSize: 26, lineHeight: 32, fontWeight: '700', letterSpacing: -0.5 },

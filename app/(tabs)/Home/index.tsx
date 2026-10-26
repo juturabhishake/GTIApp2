@@ -8,7 +8,6 @@ import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme, type AppTheme } from '@/contexts/ThemeContext';
 
-// const API_BASE_URL = 'http://10.225.51.14:3000';
 const API_BASE_URL = 'https://gtiappsbackend.vercel.app';
 
 type DashboardSummary = {
@@ -53,6 +52,7 @@ async function getDashboardSummary(date: Date): Promise<DashboardSummary> {
 
 export default function Home() {
   const [fullName, setFullName] = useState('');
+  const [position, setPosition] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const [summary, setSummary] = useState<DashboardSummary>({ productionQty: 0, rejectionQty: 0 });
@@ -67,10 +67,17 @@ export default function Home() {
     SecureStore.getItemAsync('full_name').then((name) => {
       if (name) setFullName(name);
     }).catch((error) => console.error('Unable to load profile name:', error));
+
+    SecureStore.getItemAsync('position').then((pos) => {
+      if (pos) setPosition(pos);
+    }).catch((error) => console.error('Unable to load profile position:', error));
   }, []);
 
   useFocusEffect(useCallback(() => {
     let active = true;
+    SecureStore.getItemAsync('position').then((pos) => {
+      if (active && pos) setPosition(pos);
+    }).catch(() => {});
     setSummaryLoading(true);
     setSummaryError('');
     getDashboardSummary(selectedDate).then((nextSummary) => {
@@ -130,7 +137,7 @@ export default function Home() {
             <View style={styles.welcomeCopy}>
               <Text style={styles.welcomeLabel}>Welcome,</Text>
               <Text style={styles.welcomeName} numberOfLines={1}>{fullName || 'Team member'}</Text>
-              <Text style={styles.welcomeRole}>Operator</Text>
+              <Text style={styles.welcomeRole}>{position || '—'}</Text>
             </View>
             <View style={styles.avatar}>
               {fullName ? (
