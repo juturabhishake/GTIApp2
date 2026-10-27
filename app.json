@@ -42,7 +42,8 @@
         {
           "cameraPermission": "Allow $(PRODUCT_NAME) to access your camera",
           "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone",
-          "recordAudioAndroid": true
+          "recordAudioAndroid": true,
+          "barcodeScannerEnabled": true
         }
       ],
       "expo-secure-store",
@@ -60,7 +61,15 @@
       "expo-updates",
       "expo-sharing",
       "expo-status-bar",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "-keep class expo.modules.camera.** { *; }\n-keep class com.google.mlkit.vision.barcode.** { *; }\n-keep class com.google.mlkit.vision.common.** { *; }\n-keep class com.google.mlkit.common.** { *; }\n-keep class com.google.android.gms.internal.mlkit_code_scanner.** { *; }\n-keep class com.google.mlkit.vision.codescanner.** { *; }\n-keep class com.google.android.gms.tasks.** { *; }\n-keep class androidx.camera.** { *; }"
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

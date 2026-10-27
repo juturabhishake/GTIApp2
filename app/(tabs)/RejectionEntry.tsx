@@ -111,7 +111,10 @@ function formatDate(date: Date) {
 
 function getQrPart(data: string): ScannedPart | null {
   const transId = data.trim();
-  const separator = transId.lastIndexOf('|');
+  let separator = transId.lastIndexOf('|');
+  if (separator <= 0 || separator === transId.length - 1) {
+    separator = transId.lastIndexOf('_');
+  }
   if (separator <= 0 || separator === transId.length - 1) return null;
 
   const partNo = transId.slice(0, separator).trim();
@@ -544,6 +547,7 @@ export default function RejectionEntryScreen() {
 
   const startScan = async () => {
     setScanError('');
+    scanLock.current = false;
     if (permission?.granted) {
       setCameraActive(true);
       return;
@@ -804,9 +808,17 @@ export default function RejectionEntryScreen() {
             <CameraView
               style={StyleSheet.absoluteFill}
               facing="back"
-              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+              barcodeScannerSettings={{ barcodeTypes: ['qr', 'datamatrix', 'code128', 'code39', 'pdf417'] }}
               onBarcodeScanned={onBarcodeScanned}
             />
+            <Pressable
+              onPress={() => setCameraActive(false)}
+              style={styles.cameraCloseButton}
+              accessibilityRole="button"
+              accessibilityLabel="Close scanner"
+            >
+              <Ionicons name="close" size={20} color="#fff" />
+            </Pressable>
             <View pointerEvents="none" style={styles.scanOverlay}>
               <View style={[styles.scanCorner, styles.scanCornerTopLeft, { borderColor: colors.accent }]} />
               <View style={[styles.scanCorner, styles.scanCornerTopRight, { borderColor: colors.accent }]} />
@@ -1077,6 +1089,7 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 15, fontWeight: '700' },
   sectionSubtitle: { fontSize: 11, lineHeight: 16 },
   cameraFrame: { height: 280, overflow: 'hidden', borderWidth: 1, borderRadius: 18, backgroundColor: '#10191e' },
+  cameraCloseButton: { position: 'absolute', top: 12, right: 12, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
   scanLanding: { padding: 16, borderRadius: 18 },
   scanIllustration: { width: 76, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 24, alignSelf: 'center', marginBottom: 16 },
   scanInstructions: { gap: 13, marginTop: 19 },
