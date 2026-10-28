@@ -526,7 +526,7 @@ const styles = StyleSheet.create({
   createdAtText: { flex: 1, fontSize: 10 },
   editPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   editPillText: { fontSize: 10, fontWeight: '700' },
-  searchToggleBtn: { width: 30, height: 30, borderRadius: 8, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  searchToggleBtn: { width: 31, height: 31, borderRadius: 8, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   searchBarContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 34, paddingHorizontal: 6, gap: 6 },
   searchBarIcon: { marginRight: 2 },
   searchBarInput: { flex: 1, fontSize: 11, paddingVertical: 4, paddingHorizontal: 0 },
