@@ -1,10 +1,14 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  LayoutAnimation,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
+  UIManager,
   useWindowDimensions,
   View,
 } from 'react-native';
@@ -84,6 +88,42 @@ function getRecordQuantity(record: RejectionRecord) {
   return value == null ? '—' : String(value);
 }
 
+function getRecordPartNo(record: RejectionRecord) {
+  const value = findRecordValue(record, ['partNo', 'partNumber', 'castPartNo']);
+  if (value != null && String(value).trim()) return String(value).trim();
+  const rawTransId = findRecordValue(record, ['transId', 'transactionId', 'leakCode']);
+  if (rawTransId) {
+    const transId = String(rawTransId).trim();
+    let separator = transId.lastIndexOf('|');
+    if (separator <= 0 || separator === transId.length - 1) {
+      separator = transId.lastIndexOf('_');
+    }
+    if (separator > 0 && separator < transId.length - 1) {
+      return transId.slice(0, separator).trim();
+    }
+  }
+  return '';
+}
+
+function getRecordSerialNo(record: RejectionRecord) {
+  const rawSerialNo = findRecordValue(record, ['serialNo', 'serialNumber']);
+  if (rawSerialNo != null && String(rawSerialNo).trim()) {
+    return String(rawSerialNo).trim();
+  }
+  const rawTransId = findRecordValue(record, ['transId', 'transactionId', 'leakCode']);
+  if (rawTransId) {
+    const transId = String(rawTransId).trim();
+    let separator = transId.lastIndexOf('|');
+    if (separator <= 0 || separator === transId.length - 1) {
+      separator = transId.lastIndexOf('_');
+    }
+    if (separator > 0 && separator < transId.length - 1) {
+      return transId.slice(separator + 1).trim();
+    }
+  }
+  return '';
+}
+
 function getPartFromRecord(record: RejectionRecord): ScannedPart | null {
   const rawPartNo = findRecordValue(record, ['partNo', 'partNumber', 'castPartNo']);
   const rawSerialNo = findRecordValue(record, ['serialNo', 'serialNumber']);
@@ -132,6 +172,45 @@ export default function HistoryScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchActive, setIsSearchActive] = useState(false);
+  const searchInputRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && UIManager?.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true);
+    }
+  }, []);
+
+  const openSearch = () => {
+    try {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    } catch {}
+    setIsSearchActive(true);
+    setTimeout(() => {
+      searchInputRef.current?.focus();
+    }, 50);
+  };
+
+  const closeSearch = () => {
+    try {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    } catch {}
+    setIsSearchActive(false);
+    setSearchQuery('');
+  };
+
+  const filteredRecords = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return records;
+    return records.filter((record) => {
+      const partNo = getRecordPartNo(record).toLowerCase();
+      const serialNo = getRecordSerialNo(record).toLowerCase();
+      const title = getRecordTitle(record).toLowerCase();
+      const rawTransId = String(findRecordValue(record, ['transId', 'transactionId', 'leakCode']) ?? '').toLowerCase();
+      return partNo.includes(query) || serialNo.includes(query) || title.includes(query) || rawTransId.includes(query);
+    });
+  }, [records, searchQuery]);
 
   useFocusEffect(useCallback(() => {
     let active = true;
@@ -197,15 +276,71 @@ export default function HistoryScreen() {
           </View>
 
           <View style={[styles.tabs, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
-            <View style={[styles.activeTab, { backgroundColor: colors.accent }]}>
-              <Text style={styles.activeTabText}>All Rejections</Text>
-            </View>
-            <View style={styles.tabsRight}>
-              {records.length > 0 ? (
-                <ExportExcelButton records={records} startDate={startDate} endDate={endDate} />
-              ) : null}
-              <Text style={[styles.resultCount, { color: colors.muted }]}>{records.length} total {records.length === 1 ? 'entry' : 'entries'}</Text>
-            </View>
+            {isSearchActive ? (
+              <View style={styles.searchBarContainer}>
+                <Ionicons name="search-outline" size={16} color={colors.accent} style={styles.searchBarIcon} />
+                <TextInput
+                  ref={searchInputRef}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder="Search Part No or Serial No..."
+                  placeholderTextColor={colors.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  style={[styles.searchBarInput, { color: colors.text }]}
+                />
+                {searchQuery ? (
+                  <Pressable
+                    onPress={() => setSearchQuery('')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search input"
+                    style={styles.searchClearBtn}
+                  >
+                    <Ionicons name="close-circle" size={16} color={colors.muted} />
+                  </Pressable>
+                ) : null}
+                <View style={[styles.searchCountBadge, { backgroundColor: colors.accentSoft }]}>
+                  <Text style={[styles.searchCountText, { color: colors.accent }]}>
+                    {filteredRecords.length}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={closeSearch}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close search"
+                  style={({ pressed }) => [styles.searchCloseBtn, pressed && styles.pressedBtn]}
+                >
+                  <Ionicons name="close" size={19} color={colors.muted} />
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                <View style={[styles.activeTab, { backgroundColor: colors.accent }]}>
+                  <Text style={styles.activeTabText}>All Rejections</Text>
+                </View>
+                <View style={styles.tabsRight}>
+                  <Pressable
+                    onPress={openSearch}
+                    accessibilityRole="button"
+                    accessibilityLabel="Search by Part No or Serial No"
+                    style={({ pressed }) => [
+                      styles.searchToggleBtn,
+                      { backgroundColor: colors.surfaceSolid, borderColor: colors.border },
+                      pressed && styles.pressedBtn,
+                    ]}
+                  >
+                    <Ionicons name="search-outline" size={16} color={colors.accent} />
+                  </Pressable>
+                  {records.length > 0 ? (
+                    <ExportExcelButton records={records} startDate={startDate} endDate={endDate} />
+                  ) : null}
+                  <Text style={[styles.resultCount, { color: colors.muted }]}>
+                    {records.length} total {records.length === 1 ? 'entry' : 'entries'}
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
         </>
       }
@@ -234,9 +369,20 @@ export default function HistoryScreen() {
           <Text style={[styles.stateTitle, { color: colors.text }]}>No rejection entries</Text>
           <Text style={[styles.stateText, { color: colors.muted }]}>There are no submitted records between {formatDate(startDate)} and {formatDate(endDate)}.</Text>
         </GlassPanel>
+      ) : filteredRecords.length === 0 ? (
+        <GlassPanel style={styles.stateCard}>
+          <View style={[styles.stateIcon, { backgroundColor: colors.accentSoft }]}>
+            <Ionicons name="search-outline" size={25} color={colors.accent} />
+          </View>
+          <Text style={[styles.stateTitle, { color: colors.text }]}>No matching entries</Text>
+          <Text style={[styles.stateText, { color: colors.muted }]}>No rejection records match "{searchQuery}" by Part No or Serial No.</Text>
+          <Pressable onPress={() => setSearchQuery('')} style={[styles.retryButton, { backgroundColor: colors.accent }]}>
+            <Text style={styles.retryText}>Clear search</Text>
+          </Pressable>
+        </GlassPanel>
       ) : (
         <View style={styles.recordList}>
-          {records.map((record, index) => {
+          {filteredRecords.map((record, index) => {
             const key = String(findRecordValue(record, ['id', 'rejectionId', 'transId', 'rejectionEntryId']) ?? index);
             return (
               <HistoryCard
@@ -328,7 +474,7 @@ function HistoryCard({ record, index, modern, onPress }: {
           <View style={styles.recordHeading}>
             <Text style={[styles.recordTitle, { color: colors.text }]} numberOfLines={1}>{getRecordTitle(record)}</Text>
             <Text style={[styles.recordSubtitle, { color: colors.muted }]} numberOfLines={1}>
-              {String(findRecordValue(record, ['op', 'operation', 'machineNumber']) ?? 'Rejection details')}
+              {getRecordSerialNo(record) ? `Serial No · ${getRecordSerialNo(record)}` : 'Serial No · —'}
             </Text>
           </View>
           <View style={[styles.badge, { backgroundColor: `${colors.danger}16` }]}>
@@ -380,4 +526,13 @@ const styles = StyleSheet.create({
   createdAtText: { flex: 1, fontSize: 10 },
   editPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
   editPillText: { fontSize: 10, fontWeight: '700' },
+  searchToggleBtn: { width: 30, height: 30, borderRadius: 8, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  searchBarContainer: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 34, paddingHorizontal: 6, gap: 6 },
+  searchBarIcon: { marginRight: 2 },
+  searchBarInput: { flex: 1, fontSize: 11, paddingVertical: 4, paddingHorizontal: 0 },
+  searchClearBtn: { padding: 4 },
+  searchCountBadge: { borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+  searchCountText: { fontSize: 10, fontWeight: '700' },
+  searchCloseBtn: { width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  pressedBtn: { opacity: 0.7 },
 });

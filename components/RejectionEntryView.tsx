@@ -20,8 +20,8 @@ import * as SecureStore from 'expo-secure-store';
 import { AppScreen } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
-const OPTIONS_API_URL = 'https://gtims-quality-control.vercel.app/api/casting-rejection/get-options';
-const DIMENSIONS_OPTIONS_API_URL = 'https://gtims-quality-control.vercel.app/api/MG_Daily_Rejection/options/get-options';
+const OPTIONS_API_URL = 'https://gtiappsbackend.vercel.app/api/casting-rejection/get-options';
+const DIMENSIONS_OPTIONS_API_URL = 'https://gtiappsbackend.vercel.app/api/MG_Daily_Rejection/options/get-options';
 const BACKEND_BASE_URL = 'https://gtiappsbackend.vercel.app';
 const PART_DETAILS_API_URL = `${BACKEND_BASE_URL}/api/product-matrix/part-details`;
 const REJECTION_SUBMIT_API_URL = `${BACKEND_BASE_URL}/api/rejection/save`;
@@ -97,7 +97,9 @@ export const initialForm: Record<FormKey, string> = {
   correctiveAction: '',
 };
 
-export const optionTypes = ['shifts', 'foundAt', 'defectTypes', 'dimensions', 'employees', 'operations', 'decisions'];
+export const independentOptionTypes = ['shifts', 'foundAt', 'defectTypes', 'operations', 'decisions'];
+export const productOptionTypes = ['dimensions', 'employees'];
+export const optionTypes = [...independentOptionTypes, ...productOptionTypes];
 export const entryStatuses: SelectOption[] = [
   { value: 'open', label: 'Open' },
   { value: 'close', label: 'Close' },
@@ -305,6 +307,7 @@ export function RejectionEntryView({
   const [lookupLoading, setLookupLoading] = useState(false);
   const [optionLists, setOptionLists] = useState<Record<string, SelectOption[]>>({ entryStatuses });
   const [optionErrors, setOptionErrors] = useState<Record<string, string>>({});
+  const [optionLoading, setOptionLoading] = useState<Record<string, boolean>>({});
   const [scanError, setScanError] = useState('');
   const [detailsError, setDetailsError] = useState('');
   const [submitMessage, setSubmitMessage] = useState('');
@@ -355,7 +358,8 @@ export function RejectionEntryView({
 
   useEffect(() => {
     const controller = new AbortController();
-    optionTypes.forEach((type) => {
+    independentOptionTypes.forEach((type) => {
+      setOptionLoading((current) => ({ ...current, [type]: true }));
       fetch(getOptionsApiUrl(type), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -376,10 +380,47 @@ export function RejectionEntryView({
         if (controller.signal.aborted) return;
         console.error(`Unable to load rejection options (${type}):`, error);
         setOptionErrors((current) => ({ ...current, [type]: 'Could not load choices. Tap to retry.' }));
+      }).finally(() => {
+        if (controller.signal.aborted) return;
+        setOptionLoading((current) => ({ ...current, [type]: false }));
       });
     });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!part?.productId) return;
+    const currentProductId = part.productId;
+    const controller = new AbortController();
+    productOptionTypes.forEach((type) => {
+      setOptionLoading((current) => ({ ...current, [type]: true }));
+      setOptionErrors((current) => ({ ...current, [type]: '' }));
+      fetch(getOptionsApiUrl(type), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ type, productId: currentProductId }),
+        signal: controller.signal,
+      }).then(async (response) => {
+        const payload: unknown = await response.json();
+        if (!response.ok) throw new Error(`Options request (${type}) failed with status ${response.status}.`);
+        if (!Array.isArray(payload)) throw new Error(`Options response (${type}) was not a list.`);
+        setOptionLists((current) => ({
+          ...current,
+          [type]: payload.filter((item): item is SelectOption =>
+            !!item && typeof item === 'object' && typeof item.label === 'string' && typeof item.value === 'string',
+          ),
+        }));
+      }).catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        console.error(`Unable to load rejection options (${type}):`, error);
+        setOptionErrors((current) => ({ ...current, [type]: 'Could not load choices. Tap to retry.' }));
+      }).finally(() => {
+        if (controller.signal.aborted) return;
+        setOptionLoading((current) => ({ ...current, [type]: false }));
+      });
+    });
+    return () => controller.abort();
+  }, [part?.productId]);
 
   const loadPartDetails = useCallback(async (scanned: ScannedPart) => {
     setLookupLoading(true);
@@ -446,6 +487,11 @@ export function RejectionEntryView({
     setSubmitMessage('');
     setForm({ ...initialForm, leakCode: `${scanned.partNo}|${scanned.serialNo}`, qty: '1' });
     setPart(scanned);
+    setOptionLists((current) => ({
+      ...current,
+      employees: [],
+      dimensions: [],
+    }));
     void (async () => {
       await loadPartDetails(scanned);
       try {
@@ -514,11 +560,16 @@ export function RejectionEntryView({
 
   const retryOptions = useCallback(async (type: string) => {
     setOptionErrors((current) => ({ ...current, [type]: '' }));
+    setOptionLoading((current) => ({ ...current, [type]: true }));
     try {
+      const isDependent = productOptionTypes.includes(type);
+      const bodyPayload = isDependent && part?.productId
+        ? { type, productId: part.productId }
+        : { type };
       const response = await fetch(getOptionsApiUrl(type), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ type }),
+        body: JSON.stringify(bodyPayload),
       });
       const payload: unknown = await response.json();
       if (!response.ok || !Array.isArray(payload)) throw new Error(`Options request (${type}) failed.`);
@@ -531,8 +582,10 @@ export function RejectionEntryView({
     } catch (error) {
       console.error(`Unable to reload rejection options (${type}):`, error);
       setOptionErrors((current) => ({ ...current, [type]: 'Could not load choices. Tap to retry.' }));
+    } finally {
+      setOptionLoading((current) => ({ ...current, [type]: false }));
     }
-  }, []);
+  }, [part?.productId]);
 
   const setField = (key: FormKey, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -622,6 +675,11 @@ export function RejectionEntryView({
     setActiveSection(isQC ? 'qc' : 'production');
     setCompletedSections({ production: false, qc: false });
     setCameraActive(false);
+    setOptionLists((current) => ({
+      ...current,
+      employees: [],
+      dimensions: [],
+    }));
   };
 
   const saveSection = async (section: EntrySection) => {
@@ -736,11 +794,12 @@ export function RejectionEntryView({
       : isAlwaysDisabled && part
       ? `${part.partNo}|${part.serialNo}`
       : form[field.key];
-    const fieldDisabled = isAlwaysDisabled || formLocked;
+    const isLoading = !!(field.optionType && optionLoading[field.optionType]);
+    const fieldDisabled = isAlwaysDisabled || formLocked || isLoading;
     const fieldStyle = [
       styles.fieldControl,
       { borderColor: colors.border, backgroundColor: colors.surfaceSolid },
-      fieldDisabled && styles.disabledField,
+      fieldDisabled && !isLoading && styles.disabledField,
     ];
 
     return (
@@ -760,9 +819,15 @@ export function RejectionEntryView({
             style={({ pressed }) => [fieldStyle, styles.selectControl, pressed && styles.pressed]}
           >
             <Text numberOfLines={1} style={[styles.controlText, { color: value ? colors.text : colors.muted }]}>
-              {value || field.placeholder}
+              {isLoading
+                ? 'Loading options...'
+                : value || (part && (field.optionType === 'employees' || field.optionType === 'dimensions') && !optionLists[field.optionType || '']?.length
+                  ? 'No options for this partno'
+                  : field.placeholder)}
             </Text>
-            {!fieldDisabled && optionErrors[field.optionType || ''] ? (
+            {isLoading ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : !fieldDisabled && optionErrors[field.optionType || ''] ? (
               <Ionicons name="refresh-outline" size={17} color={colors.danger} />
             ) : (
               <Ionicons name="chevron-down" size={17} color={colors.muted} />
@@ -1108,28 +1173,41 @@ export function RejectionEntryView({
               ) : null}
             </View>
             <ScrollView style={styles.optionList} keyboardShouldPersistTaps="handled">
-              {filteredOptions.map((option) => (
-                <Pressable
-                  key={`${option.value}:${option.label}`}
-                  onPress={() => {
-                    if (activeSelect) setField(activeSelect, option.label);
-                    setActiveSelect(null);
-                    setOptionSearch('');
-                  }}
-                  style={({ pressed }) => [styles.optionRow, { borderBottomColor: colors.border }, pressed && { backgroundColor: colors.accentSoft }]}
-                >
-                  <Text style={[styles.optionLabel, { color: colors.text }]}>{option.label}</Text>
-                  {activeSelect && form[activeSelect] === option.label ? <Ionicons name="checkmark" size={19} color={colors.accent} /> : null}
-                </Pressable>
-              ))}
-              {!currentOptions.length ? (
-                <Text style={[styles.noOptions, { color: colors.muted }]}>
-                  {currentSelect?.optionType && optionErrors[currentSelect.optionType] ? optionErrors[currentSelect.optionType] : 'No options available.'}
-                </Text>
-              ) : null}
-              {!!currentOptions.length && !filteredOptions.length ? (
-                <Text style={[styles.noOptions, { color: colors.muted }]}>No matching options.</Text>
-              ) : null}
+              {currentSelect?.optionType && optionLoading[currentSelect.optionType] ? (
+                <View style={{ paddingVertical: 24, alignItems: 'center', justifyContent: 'center' }}>
+                  <ActivityIndicator size="small" color={colors.accent} />
+                  <Text style={[styles.noOptions, { color: colors.muted, paddingTop: 8 }]}>Loading options...</Text>
+                </View>
+              ) : (
+                <>
+                  {filteredOptions.map((option) => (
+                    <Pressable
+                      key={`${option.value}:${option.label}`}
+                      onPress={() => {
+                        if (activeSelect) setField(activeSelect, option.label);
+                        setActiveSelect(null);
+                        setOptionSearch('');
+                      }}
+                      style={({ pressed }) => [styles.optionRow, { borderBottomColor: colors.border }, pressed && { backgroundColor: colors.accentSoft }]}
+                    >
+                      <Text style={[styles.optionLabel, { color: colors.text }]}>{option.label}</Text>
+                      {activeSelect && form[activeSelect] === option.label ? <Ionicons name="checkmark" size={19} color={colors.accent} /> : null}
+                    </Pressable>
+                  ))}
+                  {!currentOptions.length ? (
+                    <Text style={[styles.noOptions, { color: colors.muted }]}>
+                      {currentSelect?.optionType && optionErrors[currentSelect.optionType]
+                        ? optionErrors[currentSelect.optionType]
+                        : currentSelect?.optionType === 'employees' || currentSelect?.optionType === 'dimensions'
+                        ? 'No options for this partno'
+                        : 'No options available.'}
+                    </Text>
+                  ) : null}
+                  {!!currentOptions.length && !filteredOptions.length ? (
+                    <Text style={[styles.noOptions, { color: colors.muted }]}>No matching options.</Text>
+                  ) : null}
+                </>
+              )}
             </ScrollView>
           </Pressable>
         </Pressable>
