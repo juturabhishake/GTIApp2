@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { useFocusEffect } from 'expo-router';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { ExportExcelButton } from '@/components/ExportExcelButton';
+import { RejectionEntryView, type ScannedPart } from '@/components/RejectionEntryView';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 type DateField = 'start' | 'end';
@@ -53,13 +55,6 @@ function formatDate(date: Date) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function formatFieldName(key: string) {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
 function formatFieldValue(value: unknown) {
   if (value == null || value === '') return '—';
   if (typeof value === 'object') return JSON.stringify(value);
@@ -89,6 +84,42 @@ function getRecordQuantity(record: RejectionRecord) {
   return value == null ? '—' : String(value);
 }
 
+function getPartFromRecord(record: RejectionRecord): ScannedPart | null {
+  const rawPartNo = findRecordValue(record, ['partNo', 'partNumber', 'castPartNo']);
+  const rawSerialNo = findRecordValue(record, ['serialNo', 'serialNumber']);
+  const rawTransId = findRecordValue(record, ['transId', 'transactionId']);
+  const rawProductId = findRecordValue(record, ['productId', 'product_id', 'productid']);
+
+  let partNo = rawPartNo ? String(rawPartNo).trim() : '';
+  let serialNo = rawSerialNo ? String(rawSerialNo).trim() : '';
+  let transId = rawTransId ? String(rawTransId).trim() : '';
+  const productId = rawProductId ? String(rawProductId).trim() : undefined;
+
+  if (transId && (!partNo || !serialNo)) {
+    let separator = transId.lastIndexOf('|');
+    if (separator <= 0 || separator === transId.length - 1) {
+      separator = transId.lastIndexOf('_');
+    }
+    if (separator > 0 && separator < transId.length - 1) {
+      if (!partNo) partNo = transId.slice(0, separator).trim();
+      if (!serialNo) serialNo = transId.slice(separator + 1).trim();
+    }
+  }
+
+  if (!transId && partNo && serialNo) {
+    transId = `${partNo}|${serialNo}`;
+  }
+
+  if (!partNo || !serialNo) return null;
+
+  return {
+    transId,
+    partNo,
+    serialNo,
+    productId,
+  };
+}
+
 export default function HistoryScreen() {
   const { colors, uiMode } = useAppTheme();
   const { width } = useWindowDimensions();
@@ -97,7 +128,7 @@ export default function HistoryScreen() {
   const [endDate, setEndDate] = useState(today);
   const [activeDate, setActiveDate] = useState<DateField | null>(null);
   const [records, setRecords] = useState<RejectionRecord[]>([]);
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [selectedPart, setSelectedPart] = useState<ScannedPart | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [refresh, setRefresh] = useState(0);
@@ -130,6 +161,13 @@ export default function HistoryScreen() {
       if (date < startDate) setStartDate(date);
     }
     setActiveDate(null);
+  };
+
+  const handleCardPress = (record: RejectionRecord) => {
+    const part = getPartFromRecord(record);
+    if (part) {
+      setSelectedPart(part);
+    }
   };
 
   const compact = width < 380;
@@ -172,7 +210,6 @@ export default function HistoryScreen() {
         </>
       }
     >
-
       {loading ? (
         <GlassPanel style={styles.stateCard}>
           <ActivityIndicator color={colors.accent} />
@@ -200,20 +237,20 @@ export default function HistoryScreen() {
       ) : (
         <View style={styles.recordList}>
           {records.map((record, index) => {
-            const key = String(findRecordValue(record, ['id', 'rejectionId']) ?? index);
+            const key = String(findRecordValue(record, ['id', 'rejectionId', 'transId', 'rejectionEntryId']) ?? index);
             return (
               <HistoryCard
                 key={key}
                 record={record}
                 index={index}
-                expanded={expandedKey === key}
                 modern={uiMode === 'modern'}
-                onPress={() => setExpandedKey((current) => current === key ? null : key)}
+                onPress={() => handleCardPress(record)}
               />
             );
           })}
         </View>
       )}
+
       <DateTimePickerModal
         isVisible={!!activeDate}
         mode="date"
@@ -222,6 +259,29 @@ export default function HistoryScreen() {
         onConfirm={chooseDate}
         onCancel={() => setActiveDate(null)}
       />
+
+      <Modal
+        visible={!!selectedPart}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setSelectedPart(null)}
+      >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          {selectedPart ? (
+            <RejectionEntryView
+              initialPart={selectedPart}
+              hideScanner
+              onClose={() => {
+                setSelectedPart(null);
+                setRefresh((value) => value + 1);
+              }}
+              onSaved={() => {
+                setRefresh((value) => value + 1);
+              }}
+            />
+          ) : null}
+        </View>
+      </Modal>
     </AppScreen>
   );
 }
@@ -250,20 +310,17 @@ function DateRangeButton({ label, date, icon, compact, onPress }: {
   );
 }
 
-function HistoryCard({ record, index, expanded, modern, onPress }: {
+function HistoryCard({ record, index, modern, onPress }: {
   record: RejectionRecord;
   index: number;
-  expanded: boolean;
   modern: boolean;
   onPress: () => void;
 }) {
   const { colors } = useAppTheme();
-  const data = Object.entries(record);
   const createdAt = findRecordValue(record, ['created_at', 'createdAt']);
-  const detailRows = data.filter(([key]) => !['__v', 'productdetailsxml'].includes(key.replace(/[^a-z0-9]/gi, '').toLowerCase()));
   return (
     <GlassPanel style={modern ? { ...styles.recordCard, ...styles.modernCard } : styles.recordCard}>
-      <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ expanded }}>
+      <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Edit rejection form for ${getRecordTitle(record)}`}>
         <View style={styles.cardTop}>
           <View style={[styles.directionIcon, { backgroundColor: `${colors.danger}16` }]}>
             <Ionicons name="arrow-down" size={19} color={colors.danger} />
@@ -281,19 +338,12 @@ function HistoryCard({ record, index, expanded, modern, onPress }: {
         <View style={styles.cardMeta}>
           <Text style={[styles.quantityText, { color: colors.text }]}>Qty: {getRecordQuantity(record)}</Text>
           <Text style={[styles.createdAtText, { color: colors.muted }]} numberOfLines={1}>{formatFieldValue(createdAt)}</Text>
-          <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={17} color={colors.muted} />
+          <View style={[styles.editPill, { backgroundColor: colors.accentSoft }]}>
+            <Ionicons name="create-outline" size={12} color={colors.accent} />
+            <Text style={[styles.editPillText, { color: colors.accent }]}>Edit</Text>
+          </View>
         </View>
       </Pressable>
-      {expanded ? (
-        <View style={[styles.detailGrid, { borderTopColor: colors.border }]}>
-          {detailRows.map(([key, value]) => (
-            <View key={`${index}-${key}`} style={[styles.detailItem, { backgroundColor: colors.surfaceAlt }]}>
-              <Text style={[styles.detailLabel, { color: colors.muted }]}>{formatFieldName(key)}</Text>
-              <Text style={[styles.detailValue, { color: colors.text }]}>{formatFieldValue(value)}</Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
     </GlassPanel>
   );
 }
@@ -328,8 +378,6 @@ const styles = StyleSheet.create({
   cardMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 11, paddingLeft: 49 },
   quantityText: { fontSize: 11, fontWeight: '700' },
   createdAtText: { flex: 1, fontSize: 10 },
-  detailGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, marginTop: 13, paddingTop: 12 },
-  detailItem: { flexGrow: 1, flexBasis: '45%', minWidth: 125, borderRadius: 11, padding: 9 },
-  detailLabel: { fontSize: 9, fontWeight: '600', marginBottom: 4 },
-  detailValue: { fontSize: 11, lineHeight: 16 },
+  editPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  editPillText: { fontSize: 10, fontWeight: '700' },
 });

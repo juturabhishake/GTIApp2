@@ -13,7 +13,10 @@
     ],
     "ios": {
       "infoPlist": {
-        "NSCameraUsageDescription": "This app needs access to your camera to scan QR codes."
+        "NSCameraUsageDescription": "This app needs access to your camera to scan QR codes.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photos to scan QR codes from images.",
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true
       },
       "supportsTablet": true
     },
@@ -22,7 +25,10 @@
         "CAMERA",
         "VIBRATE",
         "android.permission.RECORD_AUDIO",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/image.png",
@@ -62,6 +68,12 @@
       "expo-sharing",
       "expo-status-bar",
       "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to scan QR codes."
+        }
+      ],
       [
         "expo-build-properties",
         {

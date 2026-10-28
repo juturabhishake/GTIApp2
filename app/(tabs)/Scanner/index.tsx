@@ -3,7 +3,9 @@ import {
   View, Text, TouchableOpacity, ActivityIndicator, Modal, StyleSheet, Animated, Alert,
   type StyleProp, type ViewStyle,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions, scanFromURLAsync } from 'expo-camera';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import * as Animatable from 'react-native-animatable';
 import DropDownPicker from 'react-native-dropdown-picker';
 import * as SecureStore from 'expo-secure-store';
@@ -89,6 +91,40 @@ const ScannerScreen = () => {
     setPopupVisible(false);
     setScanning(false);
     setHasScanned(false);
+  };
+
+  const pickAndScanImage = async (onScanned: (data: string) => void) => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Denied', 'Gallery access is needed to upload a QR code image.');
+        return;
+      }
+
+      const pickerResult = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 1,
+      });
+
+      if (pickerResult.canceled || !pickerResult.assets || pickerResult.assets.length === 0) {
+        return;
+      }
+
+      const imageUri = pickerResult.assets[0].uri;
+      const scannedCodes = await scanFromURLAsync(imageUri, ['qr', 'datamatrix', 'code128', 'code39', 'pdf417']);
+
+      if (!scannedCodes || scannedCodes.length === 0) {
+        Alert.alert('QR Not Found', 'No QR code detected in the selected image. Please try another image.');
+        return;
+      }
+
+      setScanning(false);
+      onScanned(scannedCodes[0].data);
+    } catch (error) {
+      console.error('Error scanning QR from image:', error);
+      Alert.alert('Scan Error', 'Failed to scan QR code from image.');
+    }
   };
 
   const handleScanButton = () => {
@@ -247,13 +283,33 @@ const ScannerScreen = () => {
           <Text style={[styles.scanValue, { color: colors.muted }]}>{partNumber ? `Scanned: ${partNumber}` : ''}</Text>
 
           {scanning ? (
-            <CameraView
-              style={[styles.camera, { borderColor: colors.accent }]}
-              onBarcodeScanned={({ data }) => handlePartScan(data)}
-              facing="back"
-            />
+            <View style={styles.cameraWrapper}>
+              <CameraView
+                style={[styles.camera, { borderColor: colors.accent }]}
+                onBarcodeScanned={({ data }) => handlePartScan(data)}
+                facing="back"
+              />
+              <TouchableOpacity
+                onPress={() => void pickAndScanImage(handlePartScan)}
+                style={styles.cameraUploadButton}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="images-outline" size={18} color="#fff" />
+                <Text style={styles.cameraUploadText}>Upload QR</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
-            <CustomButton title="Scan Part" onPress={handleScanButton} />
+            <View style={styles.buttonRow}>
+              <CustomButton title="Scan Part" onPress={handleScanButton} style={{ flex: 1 }} />
+              <TouchableOpacity
+                onPress={() => void pickAndScanImage(handlePartScan)}
+                style={[styles.uploadButton, { borderColor: colors.accent, backgroundColor: colors.surfaceSolid }]}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="images-outline" size={18} color={colors.accent} />
+                <Text style={[styles.uploadButtonText, { color: colors.accent }]}>Upload QR</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </Animatable.View>
       )}
@@ -265,13 +321,33 @@ const ScannerScreen = () => {
           <Text style={[styles.scanValue, { color: colors.muted }]}>{machineNumber ? `Scanned: ${machineNumber}` : ''}</Text>
 
           {scanning ? (
-            <CameraView
-              style={[styles.camera, { borderColor: colors.accent }]}
-              onBarcodeScanned={({ data }) => handleMachineScan(data)}
-              facing="back"
-            />
+            <View style={styles.cameraWrapper}>
+              <CameraView
+                style={[styles.camera, { borderColor: colors.accent }]}
+                onBarcodeScanned={({ data }) => handleMachineScan(data)}
+                facing="back"
+              />
+              <TouchableOpacity
+                onPress={() => void pickAndScanImage(handleMachineScan)}
+                style={styles.cameraUploadButton}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="images-outline" size={18} color="#fff" />
+                <Text style={styles.cameraUploadText}>Upload QR</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
-            <CustomButton title="Scan Machine Number" onPress={handleScanButton} />
+            <View style={styles.buttonRow}>
+              <CustomButton title="Scan Machine Number" onPress={handleScanButton} style={{ flex: 1 }} />
+              <TouchableOpacity
+                onPress={() => void pickAndScanImage(handleMachineScan)}
+                style={[styles.uploadButton, { borderColor: colors.accent, backgroundColor: colors.surfaceSolid }]}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="images-outline" size={18} color={colors.accent} />
+                <Text style={[styles.uploadButtonText, { color: colors.accent }]}>Upload QR</Text>
+              </TouchableOpacity>
+            </View>
           )}
           <CustomButton
             title="Cancel"
@@ -455,6 +531,51 @@ const styles = StyleSheet.create({
   scanValue: {
     color: '#6d7e87',
     marginBottom: 10,
+  },
+  cameraWrapper: {
+    width: '100%',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  cameraUploadButton: {
+    position: 'absolute',
+    bottom: 35,
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+  },
+  cameraUploadText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    width: '100%',
+    marginTop: 10,
+  },
+  uploadButton: {
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1.5,
+    borderRadius: 10,
+    paddingHorizontal: 16,
+  },
+  uploadButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
 

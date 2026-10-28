@@ -165,25 +165,82 @@ export function ExportExcelButton({ records, startDate, endDate }: ExportExcelBu
         XLSX.writeFile(wb, fileName);
       } else {
         const base64Data = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
-        const directory = FileSystem.cacheDirectory ?? FileSystem.documentDirectory;
-        if (!directory) {
+        const docDir = FileSystem.documentDirectory;
+        if (!docDir) {
           throw new Error('No storage directory available on device.');
         }
-        const fileUri = `${directory}${fileName}`;
-        await FileSystem.writeAsStringAsync(fileUri, base64Data, {
+
+        const gtiFolder = `${docDir}GTI52/`;
+        const dirInfo = await FileSystem.getInfoAsync(gtiFolder);
+        if (!dirInfo.exists) {
+          await FileSystem.makeDirectoryAsync(gtiFolder, { intermediates: true });
+        }
+
+        const localFileUri = `${gtiFolder}${fileName}`;
+        await FileSystem.writeAsStringAsync(localFileUri, base64Data, {
           encoding: FileSystem.EncodingType.Base64,
         });
 
-        const shareAvailable = await Sharing.isAvailableAsync();
-        if (shareAvailable) {
-          await Sharing.shareAsync(fileUri, {
-            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            dialogTitle: 'Export Rejection History',
-            UTI: 'com.microsoft.excel.xlsx',
-          });
-        } else {
-          Alert.alert('Exported', `File saved at ${fileUri}`);
+        let savedLocation = Platform.OS === 'ios' ? 'Files/GTI52' : 'Documents/GTI52';
+
+        if (Platform.OS === 'android') {
+          try {
+            const initialUri = FileSystem.StorageAccessFramework.getUriForDirectoryInRoot('Download');
+            const permissions = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync(initialUri);
+            if (permissions.granted) {
+              const baseUri = permissions.directoryUri;
+              let targetDirUri = baseUri;
+              try {
+                const subFiles = await FileSystem.StorageAccessFramework.readDirectoryAsync(baseUri);
+                const found = subFiles.find(
+                  (item) => decodeURIComponent(item).endsWith('/GTI52') || decodeURIComponent(item).endsWith(':GTI52')
+                );
+                if (found) {
+                  targetDirUri = found;
+                } else {
+                  targetDirUri = await FileSystem.StorageAccessFramework.makeDirectoryAsync(baseUri, 'GTI52');
+                }
+              } catch {
+                targetDirUri = baseUri;
+              }
+
+              const newFileUri = await FileSystem.StorageAccessFramework.createFileAsync(
+                targetDirUri,
+                fileName,
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+              );
+              await FileSystem.writeAsStringAsync(newFileUri, base64Data, {
+                encoding: FileSystem.EncodingType.Base64,
+              });
+              savedLocation = 'Downloads/GTI52';
+            }
+          } catch (safErr) {
+            console.warn('SAF download error:', safErr);
+          }
         }
+
+        const shareAvailable = await Sharing.isAvailableAsync();
+        Alert.alert(
+          'Download Complete',
+          `File downloaded successfully to ${savedLocation}/${fileName}.\n\nWould you like to share it?`,
+          [
+            { text: 'OK', style: 'cancel' },
+            ...(shareAvailable
+              ? [
+                  {
+                    text: 'Share',
+                    onPress: async () => {
+                      await Sharing.shareAsync(localFileUri, {
+                        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        dialogTitle: 'Export Rejection History',
+                        UTI: 'com.microsoft.excel.xlsx',
+                      });
+                    },
+                  },
+                ]
+              : []),
+          ]
+        );
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to export Excel.';
