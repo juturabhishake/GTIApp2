@@ -35,7 +35,7 @@ export type SelectOption = { value: string; label: string };
 export type FormKey =
   | 'scrapDate' | 'rejectedOn' | 'foundAt' | 'leakCode' | 'shift' | 'shopFloor'
   | 'partName' | 'bhChThIm' | 'op' | 'fixPos' | 'defectType' | 'dimension'
-  | 'actual' | 'qty' | 'operator' | 'leader' | 'decision' | 'reason' | 'returnReason'
+  | 'actual' | 'qty' | 'operator' | 'leader' | 'decision' | 'scrapType' | 'reason' | 'returnReason'
   | 'targetDate' | 'status' | 'correctiveAction';
 export type EntrySection = 'production' | 'qc';
 export type FieldDefinition = {
@@ -48,6 +48,8 @@ export type FieldDefinition = {
 
 export const fields: FieldDefinition[] = [
   { key: 'scrapDate', label: 'Scrap Date', kind: 'date' },
+  { key: 'decision', label: 'Decision', kind: 'select', optionType: 'decisions', placeholder: 'Select decision' },
+  { key: 'scrapType', label: 'Scrap Type', kind: 'select', optionType: 'scrapTypes', placeholder: 'Select scrap type' },
   { key: 'rejectedOn', label: 'Rejected On', kind: 'date' },
   { key: 'foundAt', label: 'Found At', kind: 'select', optionType: 'foundAt', placeholder: 'Select location' },
   { key: 'leakCode', label: 'Leak Code', kind: 'text', placeholder: 'Enter leak code' },
@@ -55,12 +57,11 @@ export const fields: FieldDefinition[] = [
   { key: 'op', label: 'OP', kind: 'select', optionType: 'operations', placeholder: 'Select OP' },
   { key: 'fixPos', label: 'Fix Pos', kind: 'text', placeholder: 'Enter fix position' },
   { key: 'defectType', label: 'Type of Defect', kind: 'select', optionType: 'defectTypes', placeholder: 'Select defect' },
-  { key: 'dimension', label: 'HEX | NO | Nominal', kind: 'select', optionType: 'dimensions', placeholder: 'Select dimension' },
+  { key: 'dimension', label: 'HEX | NO | Nominal (Optional)', kind: 'select', optionType: 'dimensions', placeholder: 'Select dimension' },
   { key: 'actual', label: 'Actual', kind: 'number', placeholder: 'Enter actual value' },
   { key: 'qty', label: 'QTY', kind: 'number', placeholder: 'Enter quantity' },
   { key: 'operator', label: 'Operator', kind: 'select', optionType: 'employees', placeholder: 'Select operator' },
   { key: 'leader', label: 'Leader', kind: 'select', optionType: 'employees', placeholder: 'Select leader' },
-  { key: 'decision', label: 'Scrap Type', kind: 'select', optionType: 'decisions', placeholder: 'Select scrap type' },
   { key: 'reason', label: 'Reason for Rejection', kind: 'multiline', placeholder: 'Describe the reason for rejection...' },
   { key: 'returnReason', label: 'Reason for Return', kind: 'multiline', placeholder: 'Describe the reason for return...' },
   { key: 'targetDate', label: 'Target Date', kind: 'date' },
@@ -68,9 +69,20 @@ export const fields: FieldDefinition[] = [
   { key: 'correctiveAction', label: 'Corrective Action', kind: 'multiline', placeholder: 'Describe the corrective action taken...' },
 ];
 
-export const qcFieldKeys: FormKey[] = ['scrapDate', 'foundAt', 'returnReason', 'correctiveAction', 'targetDate', 'status'];
+export const qcFieldKeys: FormKey[] = [
+  'scrapDate',
+  'decision',
+  'scrapType',
+  'foundAt',
+  'returnReason',
+  'correctiveAction',
+  'targetDate',
+  'status',
+];
 export const productionFields = fields.filter((field) => !qcFieldKeys.includes(field.key));
-export const qcFields = fields.filter((field) => qcFieldKeys.includes(field.key));
+export const qcFields = qcFieldKeys
+  .map((key) => fields.find((field) => field.key === key))
+  .filter((field): field is FieldDefinition => Boolean(field));
 
 export const initialForm: Record<FormKey, string> = {
   scrapDate: '',
@@ -90,6 +102,7 @@ export const initialForm: Record<FormKey, string> = {
   operator: '',
   leader: '',
   decision: '',
+  scrapType: '',
   reason: '',
   returnReason: '',
   targetDate: '',
@@ -97,7 +110,7 @@ export const initialForm: Record<FormKey, string> = {
   correctiveAction: '',
 };
 
-export const independentOptionTypes = ['shifts', 'foundAt', 'defectTypes', 'operations', 'decisions'];
+export const independentOptionTypes = ['shifts', 'foundAt', 'defectTypes', 'operations', 'decisions', 'scrapTypes'];
 export const productOptionTypes = ['dimensions', 'employees'];
 export const optionTypes = [...independentOptionTypes, ...productOptionTypes];
 export const entryStatuses: SelectOption[] = [
@@ -249,6 +262,7 @@ const rejectionColumnToFormKey: Record<string, FormKey> = {
   OperatorName: 'operator',
   LeaderName: 'leader',
   Decision: 'decision',
+  ScrapType: 'scrapType',
   RejectionReason: 'reason',
   TargetDate: 'targetDate',
   Status: 'status',
@@ -258,12 +272,12 @@ const rejectionColumnToFormKey: Record<string, FormKey> = {
 
 const productionCompleteColumns: string[] = [
   'RejectedOn', 'LeakCode', 'Shift', 'ShopFloor', 'PartName', 'BhChThIm',
-  'OP', 'FixPos', 'DefectType', 'Dimension', 'Actual', 'Qty',
-  'OperatorName', 'LeaderName', 'Decision', 'RejectionReason',
+  'OP', 'FixPos', 'DefectType', 'Qty',
+  'OperatorName', 'LeaderName', 'RejectionReason',
 ];
 
 const qcCompleteColumns: string[] = [
-  'ScrapDate', 'FoundAt', 'ReturnReason', 'CorrectiveAction', 'TargetDate', 'Status',
+  'ScrapDate', 'Decision', 'ScrapType', 'FoundAt', 'ReturnReason', 'CorrectiveAction', 'TargetDate', 'Status',
 ];
 
 function isSectionCompleteFromRecord(record: Record<string, unknown>, columns: string[]): boolean {
@@ -692,7 +706,10 @@ export function RejectionEntryView({
       setSubmitMessage('Product ID is missing. Check the Product Matrix lookup before saving.');
       return;
     }
-    const requiredFields = section === 'production' ? productionFields : qcFields;
+    const optionalFieldKeys: FormKey[] = ['dimension', 'actual'];
+    const requiredFields = (section === 'production' ? productionFields : qcFields).filter(
+      (field) => !optionalFieldKeys.includes(field.key),
+    );
     const missingField = requiredFields.find((field) => !form[field.key].trim());
     if (missingField) {
       setSubmitMessage(`Complete all ${section === 'production' ? 'Production' : 'QC'} fields before saving.`);
@@ -898,10 +915,10 @@ export function RejectionEntryView({
               <Pressable
                 onPress={onClose}
                 accessibilityRole="button"
-                accessibilityLabel="Back to history"
+                accessibilityLabel="Close form"
                 style={styles.headingIconButton}
               >
-                <Ionicons name="arrow-back" size={22} color={colors.accent} />
+                <Ionicons name="close-circle-outline" size={22} color={colors.accent} />
               </Pressable>
             ) : !hideScanner ? (
               <Pressable

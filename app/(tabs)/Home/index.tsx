@@ -131,7 +131,7 @@ export default function Home() {
         contentContainerStyle={[styles.modernContent, { paddingBottom: 16 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.blueHeader, { backgroundColor: palette.header, paddingTop: insets.top + (compact ? 30 : 36), minHeight: insets.top + (compact ? 186 : 210) }]}>
+        <View style={[styles.blueHeader, { backgroundColor: palette.header, paddingTop: insets.top + (compact ? 31.5 : 37.5), minHeight: insets.top + (compact ? 186 : 210) }]}>
           <Text style={styles.appTitle}>Production App</Text>
           <View style={styles.welcomeRow}>
             <View style={styles.welcomeCopy}>
@@ -281,9 +281,9 @@ function ClassicHome({ fullName, summary, selectedDate, summaryLoading, summaryE
       </GlassPanel>
       <Text style={[classicStyles.sectionTitle, { color: colors.text }]}>Quick access</Text>
       <View style={classicStyles.actions}>
-        <ClassicQuickAction icon="scan-outline" title="Part scanner" subtitle="Scan part and machine codes" onPress={() => router.push('/Scanner')} />
-        <ClassicQuickAction icon="document-text-outline" title="Training form" subtitle="Record a training session" onPress={() => router.push('/trainingForm')} />
-        <ClassicQuickAction icon="compass-outline" title="Process guide" subtitle="Review the workflow steps" onPress={() => router.push('/explore')} />
+        <ClassicQuickAction icon="close-circle-outline" title="Rejection form entry" subtitle="Record rejected parts and reasons" onPress={() => router.push('/RejectionEntry')} />
+        <ClassicQuickAction icon="time-outline" title="Transaction history" subtitle="View submitted rejection logs" onPress={() => router.push('/History')} />
+        <ClassicQuickAction icon="options-outline" title="Settings" subtitle="Personalize your workspace" onPress={() => router.push('/Settings')} />
       </View>
       <View style={classicStyles.summaryHeading}>
         <Text style={[classicStyles.sectionTitle, styles.classicSummaryTitle, { color: colors.text }]}>Daily Summary</Text>

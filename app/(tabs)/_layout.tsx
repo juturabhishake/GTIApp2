@@ -1,5 +1,5 @@
 import { Tabs, usePathname, useRouter, type Href } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   AccessibilityInfo,
@@ -58,6 +58,23 @@ export default function TabLayout() {
   const menuScale = useRef(new Animated.Value(0.96)).current;
   const drawerSlide = useRef(new Animated.Value(-310)).current;
   const drawerBackdropOpacity = useRef(new Animated.Value(0)).current;
+  const closeProfileMenu = useCallback(() => {
+    setProfileOpen(false);
+    setSidebarProfileOpen(false);
+    menuOpacity.setValue(0);
+    menuScale.setValue(0.96);
+  }, [menuOpacity, menuScale]);
+
+  const toggleProfileOpen = useCallback(() => {
+    setProfileOpen((prev) => {
+      const next = !prev;
+      if (!next) {
+        menuOpacity.setValue(0);
+        menuScale.setValue(0.96);
+      }
+      return next;
+    });
+  }, [menuOpacity, menuScale]);
 
   useEffect(() => {
     let active = true;
@@ -93,18 +110,24 @@ export default function TabLayout() {
   }, [collapsed, reduceMotion, sidebarWidth]);
 
   useEffect(() => {
-    const opening = profileOpen;
+    if (!profileOpen) {
+      menuOpacity.setValue(0);
+      menuScale.setValue(0.96);
+      return;
+    }
+    menuOpacity.setValue(0);
+    menuScale.setValue(0.96);
     Animated.parallel([
       Animated.timing(menuOpacity, {
-        toValue: opening ? 1 : 0,
-        duration: reduceMotion ? 0 : opening ? 190 : 240,
-        easing: opening ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+        toValue: 1,
+        duration: reduceMotion ? 0 : 190,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.timing(menuScale, {
-        toValue: opening ? 1 : 0.96,
-        duration: reduceMotion ? 0 : opening ? 190 : 240,
-        easing: opening ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+        toValue: 1,
+        duration: reduceMotion ? 0 : 190,
+        easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
     ]).start();
@@ -134,15 +157,17 @@ export default function TabLayout() {
   useEffect(() => {
     if (previousUiMode.current === uiMode) return;
     previousUiMode.current = uiMode;
-    const shouldOpenClassicDrawer = uiMode === 'classic' && !isWide;
-    if (shouldOpenClassicDrawer) {
-      drawerSlide.setValue(0);
-      drawerBackdropOpacity.setValue(1);
+    closeProfileMenu();
+    if (uiMode === 'classic' && !isWide) {
+      drawerSlide.setValue(-310);
+      drawerBackdropOpacity.setValue(0);
+      setDrawerOpen(true);
+    } else {
+      setDrawerOpen(false);
+      drawerSlide.setValue(-310);
+      drawerBackdropOpacity.setValue(0);
     }
-    setDrawerOpen(shouldOpenClassicDrawer);
-    setProfileOpen(false);
-    setSidebarProfileOpen(false);
-  }, [drawerBackdropOpacity, drawerSlide, isWide, uiMode]);
+  }, [closeProfileMenu, drawerBackdropOpacity, drawerSlide, isWide, uiMode]);
 
   useEffect(() => {
     const history = routeHistory.current;
@@ -157,6 +182,10 @@ export default function TabLayout() {
     }
   }, [pathname]);
 
+  useEffect(() => {
+    closeProfileMenu();
+  }, [pathname, closeProfileMenu]);
+
   const activeItem = useMemo(
     () => navigationItems.find((item) => pathname.toLowerCase().startsWith(String(item.path).toLowerCase())),
     [pathname],
@@ -164,17 +193,17 @@ export default function TabLayout() {
 
   const navigate = (path: Href) => {
     setDrawerOpen(false);
-    setProfileOpen(false);
-    setSidebarProfileOpen(false);
+    closeProfileMenu();
     router.push(path);
   };
 
   const openProfileMenu = () => {
-    setProfileOpen(false);
+    closeProfileMenu();
     setSidebarProfileOpen((value) => !value);
   };
 
   const logout = async () => {
+    closeProfileMenu();
     try {
       await Promise.all([
         SecureStore.deleteItemAsync('employee_id'),
@@ -192,8 +221,7 @@ export default function TabLayout() {
       ]);
       setFullName('');
       setEmployeeId('');
-      setProfileOpen(false);
-      setSidebarProfileOpen(false);
+      closeProfileMenu();
       router.replace('/');
     } catch (error) {
       console.error('Unable to clear saved credentials during logout:', error);
@@ -204,7 +232,11 @@ export default function TabLayout() {
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (profileOpen) {
-        setProfileOpen(false);
+        closeProfileMenu();
+        return true;
+      }
+      if (drawerOpen) {
+        setDrawerOpen(false);
         return true;
       }
       if (isLogin) return false;
@@ -232,7 +264,7 @@ export default function TabLayout() {
       return true;
     });
     return () => subscription.remove();
-  }, [credentialsReady, employeeId, fullName, isHome, isLogin, profileOpen, router]);
+  }, [closeProfileMenu, credentialsReady, drawerOpen, employeeId, fullName, isHome, isLogin, profileOpen, router]);
 
   const renderNavigation = (compact: boolean, mobileDrawer = false) => (
     <View style={styles.navigationLayout}>
@@ -330,12 +362,12 @@ export default function TabLayout() {
                   );
                 })}
               </View>
-              <Pressable onPress={() => navigate('/profile')} style={[styles.profileAction, styles.sidebarProfileAction, { borderBottomColor: colors.border }]}>
+              <Pressable onPress={() => { closeProfileMenu(); navigate('/profile'); }} style={[styles.profileAction, styles.sidebarProfileAction, { borderBottomColor: colors.border }]}>
                 <Ionicons name="person-circle-outline" size={18} color={colors.muted} />
                 <Text style={[styles.profileActionLabel, { color: colors.text }]}>My profile</Text>
                 <Ionicons name="chevron-forward" size={15} color={colors.muted} />
               </Pressable>
-              <Pressable onPress={() => void logout()} style={[styles.profileAction, styles.sidebarProfileAction, styles.profileActionLast]}>
+              <Pressable onPress={() => { closeProfileMenu(); void logout(); }} style={[styles.profileAction, styles.sidebarProfileAction, styles.profileActionLast]}>
                 <Ionicons name="log-out-outline" size={18} color={colors.danger} />
                 <Text style={[styles.profileActionLabel, { color: colors.danger }]}>Log out</Text>
               </Pressable>
@@ -398,19 +430,19 @@ export default function TabLayout() {
           );
         })}
       </View>
-      <Pressable onPress={() => navigate('/profile')} style={[styles.profileAction, { borderBottomColor: colors.border }]}>
+      <Pressable onPress={() => { closeProfileMenu(); navigate('/profile'); }} style={[styles.profileAction, { borderBottomColor: colors.border }]}>
         <Ionicons name="person-circle-outline" size={19} color={colors.muted} />
         <Text style={[styles.profileActionLabel, { color: colors.text }]}>My profile</Text>
         <Ionicons name="chevron-forward" size={16} color={colors.muted} />
       </Pressable>
       {includeSettings && (
-        <Pressable onPress={() => navigate('/Settings')} style={[styles.profileAction, { borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => { closeProfileMenu(); navigate('/Settings'); }} style={[styles.profileAction, { borderBottomColor: colors.border }]}>
           <Ionicons name="settings-outline" size={19} color={colors.muted} />
           <Text style={[styles.profileActionLabel, { color: colors.text }]}>Settings</Text>
           <Ionicons name="chevron-forward" size={16} color={colors.muted} />
         </Pressable>
       )}
-      <Pressable onPress={() => void logout()} style={[styles.profileAction, styles.profileActionLast]}>
+      <Pressable onPress={() => { closeProfileMenu(); void logout(); }} style={[styles.profileAction, styles.profileActionLast]}>
         <Ionicons name="log-out-outline" size={19} color={colors.danger} />
         <Text style={[styles.profileActionLabel, { color: colors.danger }]}>Log out</Text>
       </Pressable>
@@ -507,7 +539,7 @@ export default function TabLayout() {
               accessibilityRole="button"
               accessibilityLabel="Open profile, settings, theme, and logout"
               accessibilityState={{ expanded: profileOpen, selected: pathname.toLowerCase().startsWith('/profile') }}
-              onPress={() => setProfileOpen((value) => !value)}
+              onPress={toggleProfileOpen}
               style={({ pressed }) => [styles.modernFooterItem, pressed && styles.pressed]}
             >
               <View style={[styles.modernFooterItemContent, (profileOpen || pathname.toLowerCase().startsWith('/profile')) && { backgroundColor: colors.accentSoft }]}>
@@ -518,22 +550,23 @@ export default function TabLayout() {
           </View>
         </View>
 
-        <View style={[StyleSheet.absoluteFill, styles.modernProfileLayer, { bottom: 72 + insets.bottom }]} pointerEvents={profileOpen ? 'auto' : 'none'}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setProfileOpen(false)}
-            accessibilityLabel="Close profile menu"
-            pointerEvents={profileOpen ? 'auto' : 'none'}
-          />
-          <Animated.View style={[styles.profileMenu, styles.modernProfileMenu, {
-            opacity: menuOpacity,
-            backgroundColor: colors.surfaceSolid,
-            borderColor: colors.border,
-            transform: [{ scale: menuScale }],
-          }]}>
-            {renderProfileActions()}
-          </Animated.View>
-        </View>
+        {profileOpen && (
+          <View style={[StyleSheet.absoluteFill, styles.modernProfileLayer, { bottom: 72 + insets.bottom }]}>
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={closeProfileMenu}
+              accessibilityLabel="Close profile menu"
+            />
+            <Animated.View style={[styles.profileMenu, styles.modernProfileMenu, {
+              opacity: menuOpacity,
+              backgroundColor: colors.surfaceSolid,
+              borderColor: colors.border,
+              transform: [{ scale: menuScale }],
+            }]}>
+              {renderProfileActions()}
+            </Animated.View>
+          </View>
+        )}
       </View>
     );
   }
@@ -542,7 +575,7 @@ export default function TabLayout() {
     <View style={[styles.root, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.background, borderBottomColor: colors.border, paddingTop: insets.top, minHeight: 72 + insets.top }]}>
         <Pressable
-          onPress={() => isWide ? setCollapsed((value) => !value) : setDrawerOpen(true)}
+          onPress={() => isWide ? setCollapsed((value) => !value) : setDrawerOpen((value) => !value)}
           accessibilityRole="button"
           accessibilityLabel={isWide ? (collapsed ? 'Expand sidebar' : 'Collapse sidebar') : 'Open navigation'}
           style={({ pressed }) => [styles.iconButton, { backgroundColor: colors.surface }, pressed && styles.pressed]}
@@ -555,7 +588,7 @@ export default function TabLayout() {
         </View>
         <View style={styles.headerActions}>
           <Pressable
-            onPress={() => setProfileOpen((value) => !value)}
+            onPress={toggleProfileOpen}
             accessibilityRole="button"
             accessibilityLabel="Open profile and theme settings"
             style={({ pressed }) => [styles.profileButton, { backgroundColor: colors.surface, borderColor: colors.border }, pressed && styles.pressed]}
@@ -603,12 +636,12 @@ export default function TabLayout() {
         </View>
       )}
 
-      <View style={[StyleSheet.absoluteFill, styles.profileLayer]} pointerEvents={profileOpen ? 'auto' : 'none'}>
+      {profileOpen && (
+        <View style={[StyleSheet.absoluteFill, styles.profileLayer]}>
           <Pressable
             style={StyleSheet.absoluteFill}
-            onPress={() => setProfileOpen(false)}
+            onPress={closeProfileMenu}
             accessibilityLabel="Close profile menu"
-            pointerEvents={profileOpen ? 'auto' : 'none'}
           />
           <Animated.View style={[styles.profileMenu, {
             top: 62 + insets.top,
@@ -619,7 +652,8 @@ export default function TabLayout() {
           }]}>
             {renderProfileActions(false)}
           </Animated.View>
-      </View>
+        </View>
+      )}
     </View>
   );
 }

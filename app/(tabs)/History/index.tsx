@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   LayoutAnimation,
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -249,6 +249,33 @@ export default function HistoryScreen() {
     }
   };
 
+  useEffect(() => {
+    if (!selectedPart) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSelectedPart(null);
+      setRefresh((value) => value + 1);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [selectedPart]);
+
+  if (selectedPart) {
+    return (
+      <RejectionEntryView
+        initialPart={selectedPart}
+        hideScanner
+        onClose={() => {
+          setSelectedPart(null);
+          setRefresh((value) => value + 1);
+        }}
+        onSaved={() => {
+          setSelectedPart(null);
+          setRefresh((value) => value + 1);
+        }}
+      />
+    );
+  }
+
   const compact = width < 380;
 
   return (
@@ -405,29 +432,6 @@ export default function HistoryScreen() {
         onConfirm={chooseDate}
         onCancel={() => setActiveDate(null)}
       />
-
-      <Modal
-        visible={!!selectedPart}
-        animationType="slide"
-        presentationStyle="fullScreen"
-        onRequestClose={() => setSelectedPart(null)}
-      >
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
-          {selectedPart ? (
-            <RejectionEntryView
-              initialPart={selectedPart}
-              hideScanner
-              onClose={() => {
-                setSelectedPart(null);
-                setRefresh((value) => value + 1);
-              }}
-              onSaved={() => {
-                setRefresh((value) => value + 1);
-              }}
-            />
-          ) : null}
-        </View>
-      </Modal>
     </AppScreen>
   );
 }

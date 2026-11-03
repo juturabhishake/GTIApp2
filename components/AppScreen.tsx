@@ -27,7 +27,7 @@ export function AppScreen({
     return (
       <View style={[styles.modernContainer, { backgroundColor: colors.background }]}>
         {hasHeader ? (
-          <View style={[styles.modernStickyHeader, { backgroundColor: colors.background, paddingTop: insets.top + 10 }]}>
+          <View style={[styles.modernStickyHeader, { backgroundColor: colors.background, paddingTop: insets.top + 11.5 }]}>
             <View style={styles.inner}>
               {showHeading && (
                 <View style={[styles.pageHeading, styles.modernHeading]}>
@@ -44,7 +44,7 @@ export function AppScreen({
           contentContainerStyle={[
             styles.content,
             styles.modernContent,
-            !hasHeader && { paddingTop: insets.top + 10 },
+            !hasHeader && { paddingTop: insets.top + 11.5 },
             contentStyle,
           ]}
           showsVerticalScrollIndicator={false}
@@ -93,8 +93,8 @@ const styles = StyleSheet.create({
   modernContainer: { flex: 1 },
   modernStickyHeader: { paddingHorizontal: 16, paddingBottom: 6 },
   modernHeading: { marginBottom: 12 },
-  content: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 5, paddingBottom: 36 },
-  modernContent: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 24 },
+  content: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 6.5, paddingBottom: 36 },
+  modernContent: { paddingHorizontal: 16, paddingTop: 7.5, paddingBottom: 24 },
   inner: { width: '100%', maxWidth: 1120, alignSelf: 'center' },
   pageHeading: { marginBottom: 20, gap: 6 },
   title: { fontSize: 26, lineHeight: 32, fontWeight: '700', letterSpacing: -0.5 },
