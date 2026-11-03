@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
@@ -9,6 +9,8 @@ type AppScreenProps = React.PropsWithChildren<{
   contentStyle?: ViewStyle;
   showHeading?: boolean;
   stickyHeader?: React.ReactNode;
+  scrollRef?: React.RefObject<React.ElementRef<typeof ScrollView> | null>;
+  keyboardAvoiding?: boolean;
 }>;
 
 export function AppScreen({
@@ -17,6 +19,8 @@ export function AppScreen({
   contentStyle,
   showHeading = true,
   stickyHeader,
+  scrollRef,
+  keyboardAvoiding = true,
   children,
 }: AppScreenProps) {
   const { colors, uiMode } = useAppTheme();
@@ -24,7 +28,7 @@ export function AppScreen({
 
   if (uiMode === 'modern') {
     const hasHeader = showHeading || !!stickyHeader;
-    return (
+    const body = (
       <View style={[styles.modernContainer, { backgroundColor: colors.background }]}>
         {hasHeader ? (
           <View style={[styles.modernStickyHeader, { backgroundColor: colors.background, paddingTop: insets.top + 11.5 }]}>
@@ -40,6 +44,7 @@ export function AppScreen({
           </View>
         ) : null}
         <ScrollView
+          ref={scrollRef}
           style={{ flex: 1, backgroundColor: colors.background }}
           contentContainerStyle={[
             styles.content,
@@ -48,6 +53,8 @@ export function AppScreen({
             contentStyle,
           ]}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets={true}
         >
           <View style={styles.inner}>
             {children}
@@ -55,16 +62,31 @@ export function AppScreen({
         </ScrollView>
       </View>
     );
+
+    if (keyboardAvoiding) {
+      return (
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          {body}
+        </KeyboardAvoidingView>
+      );
+    }
+    return body;
   }
 
-  return (
+  const legacyBody = (
     <ScrollView
+      ref={scrollRef}
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={[
         styles.content,
         contentStyle,
       ]}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      automaticallyAdjustKeyboardInsets={true}
     >
       <View style={styles.inner}>
         {showHeading && (
@@ -78,6 +100,19 @@ export function AppScreen({
       </View>
     </ScrollView>
   );
+
+  if (keyboardAvoiding) {
+    return (
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        {legacyBody}
+      </KeyboardAvoidingView>
+    );
+  }
+
+  return legacyBody;
 }
 
 export function GlassPanel({ children, style }: React.PropsWithChildren<{ style?: ViewStyle }>) {

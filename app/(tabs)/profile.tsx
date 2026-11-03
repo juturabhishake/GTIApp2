@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -17,7 +18,15 @@ import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 export default function ProfileScreen() {
-  const [profile, setProfile] = useState({ name: '', empid: '', department: '', position: '', accessType: '' });
+  const [profile, setProfile] = useState({
+    name: '',
+    empid: '',
+    department: '',
+    position: '',
+    accessType: '',
+    location: '',
+  });
+  const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -25,23 +34,41 @@ export default function ProfileScreen() {
   const { colors } = useAppTheme();
 
   useEffect(() => {
+    let active = true;
     const fetchData = async () => {
-      const name = await SecureStore.getItemAsync('full_name');
-      const empid = await SecureStore.getItemAsync('employee_id');
+      try {
+        const [name, empid, dept1, dept2, pos1, pos2, logintype1, logintype2, location] = await Promise.all([
+          SecureStore.getItemAsync('full_name'),
+          SecureStore.getItemAsync('employee_id'),
+          SecureStore.getItemAsync('department'),
+          SecureStore.getItemAsync('tped'),
+          SecureStore.getItemAsync('position'),
+          SecureStore.getItemAsync('sop'),
+          SecureStore.getItemAsync('logintype'),
+          SecureStore.getItemAsync('tl'),
+          SecureStore.getItemAsync('currentgeocord'),
+        ]);
 
-      const dept = (await SecureStore.getItemAsync('department')) || (await SecureStore.getItemAsync('tped'));
-      const pos = (await SecureStore.getItemAsync('position')) || (await SecureStore.getItemAsync('sop'));
-      const logintype = (await SecureStore.getItemAsync('logintype')) || (await SecureStore.getItemAsync('tl'));
-
-      setProfile({
-        name: name || '',
-        empid: empid || '',
-        department: dept || '',
-        position: pos || '',
-        accessType: logintype || '',
-      });
+        if (active) {
+          setProfile({
+            name: name || '',
+            empid: empid || '',
+            department: dept1 || dept2 || '',
+            position: pos1 || pos2 || '',
+            accessType: logintype1 || logintype2 || '',
+            location: location || '',
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load profile data:', err);
+      } finally {
+        if (active) setLoading(false);
+      }
     };
     fetchData();
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleChangePassword = async () => {
@@ -66,6 +93,7 @@ export default function ProfileScreen() {
           SecureStore.deleteItemAsync('employee_id'),
           SecureStore.deleteItemAsync('full_name'),
           SecureStore.deleteItemAsync('password'),
+          SecureStore.deleteItemAsync('currentgeocord'),
         ]);
         router.replace('/');
       } else {
@@ -77,6 +105,17 @@ export default function ProfileScreen() {
   };
 
   const inputStyle = [styles.input, { backgroundColor: colors.surfaceAlt, borderColor: colors.border, color: colors.text }];
+
+  if (loading) {
+    return (
+      <AppScreen title="My profile" subtitle="Your account details and security settings.">
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.accent} />
+          <Text style={[styles.loadingText, { color: colors.muted }]}>Loading profile...</Text>
+        </View>
+      </AppScreen>
+    );
+  }
 
   return (
     <AppScreen title="My profile" subtitle="Your account details and security settings.">
@@ -113,6 +152,11 @@ export default function ProfileScreen() {
             <Ionicons name="shield-checkmark-outline" size={18} color={colors.muted} />
             <Text style={[styles.detailLabel, { color: colors.muted }]}>Access Type</Text>
             <Text style={[styles.detailValue, { color: colors.accent, fontWeight: '700', textTransform: 'uppercase' }]}>{profile.accessType || '—'}</Text>
+          </View>
+          <View style={styles.detailRow}>
+            <Ionicons name="location-outline" size={18} color={colors.muted} />
+            <Text style={[styles.detailLabel, { color: colors.muted }]}>Current Location</Text>
+            <Text style={[styles.detailValue, { color: colors.text }]}>{profile.location || '—'}</Text>
           </View>
         </View>
         <Pressable
@@ -162,15 +206,17 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: { minHeight: 320, alignItems: 'center', justifyContent: 'center', gap: 12 },
+  loadingText: { fontSize: 13, fontWeight: '500' },
   profileCard: { alignItems: 'center', paddingHorizontal: 22, paddingVertical: 28 },
   avatar: { width: 76, height: 76, borderRadius: 25, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   profileInfo: { alignItems: 'center', gap: 5 },
   profileName: { fontSize: 19, fontWeight: '700' },
   profileCaption: { fontSize: 12 },
   detailRows: { width: '100%', borderTopWidth: StyleSheet.hairlineWidth, marginTop: 24, paddingTop: 12, gap: 4 },
-  detailRow: { minHeight: 47, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  detailRow: { minHeight: 47, flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
   detailLabel: { flex: 1, fontSize: 12 },
-  detailValue: { fontSize: 12, fontWeight: '600' },
+  detailValue: { fontSize: 12, fontWeight: '600', maxWidth: '60%', textAlign: 'right' },
   changePasswordButton: { alignSelf: 'stretch', minHeight: 48, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, marginTop: 20 },
   changePasswordText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
   pressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },

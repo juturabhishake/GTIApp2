@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, TextInput, Text, TouchableOpacity,
-  ActivityIndicator, StyleSheet, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Image
+  ActivityIndicator, StyleSheet, Keyboard, KeyboardAvoidingView, Platform, ScrollView, Image, Modal, Pressable
 } from 'react-native';
 import * as Animatable from 'react-native-animatable';
 import * as SecureStore from 'expo-secure-store';
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppTheme } from '@/contexts/ThemeContext';
@@ -15,6 +16,12 @@ export default function LoginScreen() {
   const [secureText, setSecureText] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorAnim, setErrorAnim] = useState(false);
+  const [loginStep, setLoginStep] = useState<'idle' | 'locating' | 'verifying' | 'success' | 'error'>('idle');
+  const [statusText, setStatusText] = useState('');
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalTitle, setModalTitle] = useState('');
+  const [modalMessage, setModalMessage] = useState('');
+  const [modalLocations, setModalLocations] = useState<string[]>([]);
   const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
 
   const router = useRouter();
@@ -42,28 +49,117 @@ export default function LoginScreen() {
     };
   }, [router]);
 
+  const closeModal = () => {
+    setModalVisible(false);
+    setLoading(false);
+    setLoginStep('idle');
+    setStatusText('');
+    setErrorAnim(false);
+  };
+
   const handleLogin = async () => {
+    if (!empID.trim() || !password.trim()) {
+      setLoginStep('error');
+      setStatusText('Enter credentials');
+      setModalTitle('Credentials Required');
+      setModalMessage('Please enter both your Employee ID and Password to sign in.');
+      setModalLocations([]);
+      setModalVisible(true);
+      setErrorAnim(true);
+      return;
+    }
+
     setLoading(true);
     setErrorAnim(false);
-    console.log("Login attempt with Employee ID:", empID);
-    console.log("Login attempt with Password:", password);
+    setLoginStep('locating');
+    setStatusText('Checking location...');
     try {
-      const response = await fetch("https://gtiappsbackend.vercel.app/api/login", {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLoginStep('error');
+        setStatusText('Permission required');
+        setErrorAnim(true);
+        setModalTitle('Location Permission Required');
+        setModalMessage('Please allow location permission in your device settings to verify your workplace and sign in.');
+        setModalLocations([]);
+        setModalVisible(true);
+        return;
+      }
+
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        setLoginStep('error');
+        setStatusText('GPS disabled');
+        setErrorAnim(true);
+        setModalTitle('GPS / Location Disabled');
+        setModalMessage('Please enable GPS / Location services on your device to sign in.');
+        setModalLocations([]);
+        setModalVisible(true);
+        return;
+      }
+
+      const location = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const latitude = location.coords.latitude;
+      const longitude = location.coords.longitude;
+      setLoginStep('verifying');
+      setStatusText('Verifying workplace...');
+      console.log(`Attempting login for Employee ID: ${empID} at coordinates: (${latitude}, ${longitude})`);
+      const response = await fetch("https://gtiappsbackend.vercel.app/api/geologin", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           employeeId: empID,
-          password: password
+          password: password,
+          latitude,
+          longitude,
         })
       });
 
       const data = await response.json();
 
+      if (response.status === 403 || data.message === 'Location Restricted') {
+        const rawLocations = typeof data.allowedLocations === 'string' ? data.allowedLocations : '';
+        const list = rawLocations.split('\n').map((item: string) => item.trim()).filter(Boolean);
+        setLoginStep('error');
+        setStatusText('Location Restricted');
+        setErrorAnim(true);
+        setModalTitle('Location Restricted');
+        setModalMessage('You are not in location. Please reach below location to login:');
+        setModalLocations(list.length ? list : ['Allowed Workplace Area']);
+        setModalVisible(true);
+        return;
+      }
+
+      if (response.status === 400 && data.message === 'Location Required') {
+        setLoginStep('error');
+        setStatusText('Location Required');
+        setErrorAnim(true);
+        setModalTitle('Location Required');
+        setModalMessage(data.details || 'Location coordinates are required to verify your workplace.');
+        setModalLocations([]);
+        setModalVisible(true);
+        return;
+      }
+
+      if (response.status === 401 || data.message === 'Invalid Credentials') {
+        setLoginStep('error');
+        setStatusText('Invalid Credentials');
+        setErrorAnim(true);
+        setModalTitle('Invalid Credentials');
+        setModalMessage('The Employee ID or Password you entered is incorrect. Please check and try again.');
+        setModalLocations([]);
+        setModalVisible(true);
+        return;
+      }
+
       if (response.ok && data.message === "Login Success") {
-
-
+        setLoginStep('success');
+        setStatusText('Login Success!');
 
         const toStr = (val: unknown) => (val === null || val === undefined ? '' : String(val));
         const empId = toStr(data.data.EmployeeId || empID);
@@ -73,6 +169,7 @@ export default function LoginScreen() {
         const pos = toStr(data.data.Position);
         const sec = toStr(data.data.Section);
         const lType = toStr(data.data.logintype);
+        const geoAddr = toStr(data.data.currentgeocord || data.data.GeoAddress || data.data.Address || data.data.MatchedAddress);
 
         await SecureStore.setItemAsync("employee_id", empId);
         await SecureStore.setItemAsync("full_name", uName);
@@ -87,26 +184,21 @@ export default function LoginScreen() {
         await SecureStore.setItemAsync("sop", pos);
         await SecureStore.setItemAsync("ces", sec);
         await SecureStore.setItemAsync("tl", lType);
-
-
-
-        console.log("Login successful, redirecting to profile...");
-        console.log("Employee ID:", data.data.EmployeeId);
-        console.log("Full Name:", data.data.Username);
-        console.log("Department:", data.data.Department);
-        console.log("Position:", data.data.Position);
-        console.log("Section:", data.data.Section);
-        console.log("Login Type:", data.data.logintype);
+        await SecureStore.setItemAsync("currentgeocord", geoAddr);
 
         router.replace('/Home');
-        setLoading(false);
-      } else {
-        throw new Error(data.message || "Login Failed");
+        return;
       }
+
+      throw new Error(data.message || "Login Failed");
     } catch (err) {
+      setLoginStep('error');
+      setStatusText('Login Failed');
       setErrorAnim(true);
-      setTimeout(() => setErrorAnim(false), 3000);
-      setLoading(false);
+      setModalTitle('Sign In Failed');
+      setModalMessage(err instanceof Error ? err.message : 'Unable to connect to login server. Please try again.');
+      setModalLocations([]);
+      setModalVisible(true);
     }
   };
 
@@ -170,16 +262,25 @@ export default function LoginScreen() {
               </View>
 
               <TouchableOpacity
-                style={[styles.loginButton, { backgroundColor: errorAnim ? colors.danger : colors.accent }]}
+                style={[styles.loginButton, { backgroundColor: loginStep === 'error' ? colors.danger : loginStep === 'success' ? '#10b981' : colors.accent }]}
                 onPress={handleLogin}
-                disabled={loading}
+                disabled={loading || loginStep === 'success'}
                 accessibilityRole="button"
               >
-                {loading ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : errorAnim ? (
-                  <Animatable.View animation="shake">
-                    <Ionicons name="close-circle" size={22} color="#fff" />
+                {loginStep === 'locating' || loginStep === 'verifying' ? (
+                  <>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={styles.loginText}>{statusText}</Text>
+                  </>
+                ) : loginStep === 'success' ? (
+                  <>
+                    <Ionicons name="checkmark-circle" size={20} color="#fff" />
+                    <Text style={styles.loginText}>{statusText}</Text>
+                  </>
+                ) : loginStep === 'error' ? (
+                  <Animatable.View animation="shake" style={styles.statusRow}>
+                    <Ionicons name="close-circle" size={20} color="#fff" />
+                    <Text style={styles.loginText}>{statusText}</Text>
                   </Animatable.View>
                 ) : (
                   <>
@@ -196,6 +297,46 @@ export default function LoginScreen() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={closeModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.border }]}>
+            <View style={[styles.modalIconWrap, { backgroundColor: `${colors.danger}15` }]}>
+              <Ionicons
+                name={modalLocations.length > 0 ? "location-outline" : "alert-circle-outline"}
+                size={32}
+                color={colors.danger}
+              />
+            </View>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{modalTitle || 'Alert'}</Text>
+            <Text style={[styles.modalSubtitle, { color: colors.muted }]}>
+              {modalMessage}
+            </Text>
+            {modalLocations.length > 0 && (
+              <View style={[styles.locationsBox, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
+                {modalLocations.map((loc, idx) => (
+                  <View key={idx} style={styles.locationRow}>
+                    <Ionicons name="navigate-circle-outline" size={17} color={colors.accent} style={styles.locationRowIcon} />
+                    <Text style={[styles.locationRowText, { color: colors.text }]}>{loc}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            <TouchableOpacity
+              style={[styles.modalCloseButton, { backgroundColor: colors.accent }]}
+              onPress={closeModal}
+              accessibilityRole="button"
+            >
+              <Text style={styles.modalCloseButtonText}>Understood</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -316,6 +457,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 9,
   },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
   loginText: {
     color: '#fff',
     fontWeight: '700',
@@ -333,5 +480,79 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 1.3,
     marginTop: 24,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 400,
+    borderRadius: 22,
+    borderWidth: 1,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modalIconWrap: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
+    marginBottom: 18,
+  },
+  locationsBox: {
+    width: '100%',
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 20,
+    gap: 10,
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  locationRowIcon: {
+    marginTop: 2,
+  },
+  locationRowText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  modalCloseButton: {
+    width: '100%',
+    minHeight: 48,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });

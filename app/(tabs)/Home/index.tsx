@@ -145,13 +145,18 @@ export default function Home() {
               <Text style={styles.welcomeName} numberOfLines={1}>{fullName || 'Team member'}</Text>
               <Text style={styles.welcomeRole}>{position || '—'}</Text>
             </View>
-            <View style={styles.avatar}>
+            <Pressable
+              onPress={() => router.push('/profile')}
+              accessibilityRole="button"
+              accessibilityLabel="Open profile"
+              style={({ pressed }) => [styles.avatar, pressed && { opacity: 0.82 }]}
+            >
               {fullName ? (
                 <Text style={styles.avatarInitials}>{fullName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()}</Text>
               ) : (
                 <Image source={require('@/assets/images/gti_icon.png')} style={styles.avatarLogo} resizeMode="contain" />
               )}
-            </View>
+            </Pressable>
           </View>
         </View>
 

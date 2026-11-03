@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -336,13 +337,54 @@ export function RejectionEntryView({
   const [showDetails, setShowDetails] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [loginType, setLoginType] = useState('');
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const scanLock = useRef(false);
+  const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
+  const fieldOffsets = useRef<Record<string, number>>({});
+  const formCardY = useRef(0);
+  const lastFocusedField = useRef<FormKey | null>(null);
   const columns = width >= 1180 ? 4 : width >= 700 ? 2 : 1;
   const inputWidth = columns === 1 ? '100%' : `${100 / columns - 1.5}%`;
   const actionsInRow = width >= 390;
   const allSectionsComplete = completedSections.production && completedSections.qc;
   const sectionFields = activeSection === 'production' ? productionFields : qcFields;
   const sectionComplete = completedSections[activeSection];
+
+  const scrollToField = useCallback((key: FormKey) => {
+    const offset = fieldOffsets.current[key];
+    if (offset !== undefined && scrollViewRef.current) {
+      const targetY = Math.max(0, formCardY.current + offset - 40);
+      scrollViewRef.current.scrollTo({ y: targetY, animated: true });
+    } else {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }
+  }, []);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        setKeyboardHeight(e.endCoordinates.height);
+        if (lastFocusedField.current) {
+          setTimeout(() => {
+            if (lastFocusedField.current) {
+              scrollToField(lastFocusedField.current);
+            }
+          }, 60);
+        }
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [scrollToField]);
 
   const isAdmin = loginType === 'admin';
   const isProd = loginType === 'prod';
@@ -820,7 +862,13 @@ export function RejectionEntryView({
     ];
 
     return (
-      <View key={field.key} style={[styles.field, { width: inputWidth as `${number}%` }]}>
+      <View
+        key={field.key}
+        onLayout={(e) => {
+          fieldOffsets.current[field.key] = e.nativeEvent.layout.y;
+        }}
+        style={[styles.field, { width: inputWidth as `${number}%` }]}
+      >
         <Text style={[styles.fieldLabel, { color: colors.text }]}>{field.label}</Text>
         {field.kind === 'select' ? (
           <Pressable
@@ -865,6 +913,17 @@ export function RejectionEntryView({
             onChangeText={(text) => {
               if (field.key !== 'leakCode' && field.key !== 'qty') setField(field.key, text);
             }}
+            onFocus={() => {
+              lastFocusedField.current = field.key;
+              setTimeout(() => {
+                scrollToField(field.key);
+              }, 60);
+            }}
+            onBlur={() => {
+              if (lastFocusedField.current === field.key) {
+                lastFocusedField.current = null;
+              }
+            }}
             editable={!fieldDisabled}
             placeholder={field.placeholder}
             placeholderTextColor={colors.muted}
@@ -896,6 +955,8 @@ export function RejectionEntryView({
 
   return (
     <AppScreen
+      scrollRef={scrollViewRef}
+      contentStyle={keyboardHeight > 0 ? { paddingBottom: keyboardHeight + 80 } : undefined}
       title="Rejection Entry"
       subtitle="Review the scanned part and complete the rejection details."
     >
@@ -1052,7 +1113,12 @@ export function RejectionEntryView({
       </View>
 
       {part ? (
-        <View style={[styles.formCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.border }]}>
+        <View
+          onLayout={(e) => {
+            formCardY.current = e.nativeEvent.layout.y;
+          }}
+          style={[styles.formCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.border }]}
+        >
           <View style={styles.formHeading}>
             <View style={[styles.headingIcon, { backgroundColor: `${colors.danger}18` }]}>
               <Ionicons name="clipboard-outline" size={21} color={colors.danger} />
@@ -1158,13 +1224,17 @@ export function RejectionEntryView({
           setOptionSearch('');
         }}
       >
-        <Pressable
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={styles.modalBackdrop}
-          onPress={() => {
-            setActiveSelect(null);
-            setOptionSearch('');
-          }}
         >
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              setActiveSelect(null);
+              setOptionSearch('');
+            }}
+          />
           <Pressable
             onPress={(event) => event.stopPropagation()}
             style={[styles.optionSheet, { backgroundColor: colors.surfaceSolid, borderColor: colors.border }]}
@@ -1227,7 +1297,7 @@ export function RejectionEntryView({
               )}
             </ScrollView>
           </Pressable>
-        </Pressable>
+        </KeyboardAvoidingView>
       </Modal>
 
       <DateTimePickerModal
