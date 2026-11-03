@@ -11,8 +11,9 @@ import { useAppTheme, type AppTheme } from '@/contexts/ThemeContext';
 const API_BASE_URL = 'https://gtiappsbackend.vercel.app';
 
 type DashboardSummary = {
-  productionQty: number;
-  rejectionQty: number;
+  productionCount: number;
+  qcCount: number;
+  totalRejection: number;
 };
 
 function formatApiDate(date: Date) {
@@ -39,14 +40,19 @@ async function getDashboardSummary(date: Date): Promise<DashboardSummary> {
     throw new Error('The dashboard summary response did not contain summary data.');
   }
   const row = payload.data as Record<string, unknown>;
-  const getValue = (key: string) => {
-    const value = Number(Object.entries(row).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1]);
+  const getValue = (key: string, fallbackKey?: string) => {
+    let match = Object.entries(row).find(([name]) => name.toLowerCase() === key.toLowerCase())?.[1];
+    if ((match === undefined || match === null) && fallbackKey) {
+      match = Object.entries(row).find(([name]) => name.toLowerCase() === fallbackKey.toLowerCase())?.[1];
+    }
+    const value = Number(match ?? 0);
     if (!Number.isFinite(value)) throw new Error(`The dashboard summary returned an invalid ${key}.`);
     return value;
   };
   return {
-    productionQty: getValue('productionQty'),
-    rejectionQty: getValue('rejectionQty'),
+    productionCount: getValue('productionCount', 'productionQty'),
+    qcCount: getValue('qcCount', 'rejectionQty'),
+    totalRejection: getValue('totalRejection', 'totalEntries'),
   };
 }
 
@@ -55,7 +61,7 @@ export default function Home() {
   const [position, setPosition] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
-  const [summary, setSummary] = useState<DashboardSummary>({ productionQty: 0, rejectionQty: 0 });
+  const [summary, setSummary] = useState<DashboardSummary>({ productionCount: 0, qcCount: 0, totalRejection: 0 });
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState('');
   const { colors, theme, uiMode } = useAppTheme();
@@ -184,7 +190,7 @@ export default function Home() {
           </View>
 
           <View style={[styles.summaryHeading, { borderTopColor: palette.divider }]}>
-            <Text style={[styles.summaryTitle, { color: palette.text }]}>Today's Summary</Text>
+            <Text style={[styles.summaryTitle, { color: palette.text }]}>Daily Summary</Text>
             <Pressable onPress={() => setDatePickerVisible(true)} style={styles.summaryDate} accessibilityRole="button">
               <Ionicons name="calendar-outline" size={14} color={palette.muted} />
               <Text style={[styles.summaryDateText, { color: palette.muted }]}>{selectedDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
@@ -192,9 +198,9 @@ export default function Home() {
             </Pressable>
           </View>
           <View style={styles.summaryCards}>
-            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty)} label="Production Qty" tint="#31a779" background={palette.greenTint} textColor={palette.text} />
-            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.rejectionQty)} label="Rejection Qty" tint="#dd5360" background={palette.redTint} textColor={palette.text} />
-            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty + summary.rejectionQty)} label="Total Qty" tint="#3687cf" background={palette.blueTint} textColor={palette.text} />
+            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionCount)} label="Production" tint="#31a779" background={palette.greenTint} textColor={palette.text} />
+            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.qcCount)} label="QC" tint="#3687cf" background={palette.blueTint} textColor={palette.text} />
+            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.totalRejection)} label="Total Rejection" tint="#dd5360" background={palette.redTint} textColor={palette.text} />
           </View>
           {summaryError ? <Text style={[styles.summaryError, { color: palette.muted }]}>{summaryError}</Text> : null}
         </View>
@@ -296,9 +302,9 @@ function ClassicHome({ fullName, summary, selectedDate, summaryLoading, summaryE
         </Pressable>
       </View>
       <View style={classicStyles.summaryCards}>
-        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty)} label="Production Qty" tint="#31a779" background={colors.accentSoft} textColor={colors.text} />
-        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.rejectionQty)} label="Rejection Qty" tint={colors.danger} background={`${colors.danger}12`} textColor={colors.text} />
-        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionQty + summary.rejectionQty)} label="Total Qty" tint="#3687cf" background="rgba(54,135,207,0.12)" textColor={colors.text} />
+        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionCount)} label="Production" tint="#31a779" background={colors.accentSoft} textColor={colors.text} />
+        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.qcCount)} label="QC" tint="#3687cf" background="rgba(54,135,207,0.12)" textColor={colors.text} />
+        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.totalRejection)} label="Total Rejection" tint={colors.danger} background={`${colors.danger}12`} textColor={colors.text} />
       </View>
       {summaryError ? <Text style={[styles.summaryError, { color: colors.muted }]}>{summaryError}</Text> : null}
     </AppScreen>
