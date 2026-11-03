@@ -6,7 +6,7 @@ import {
 import * as Animatable from 'react-native-animatable';
 import * as SecureStore from 'expo-secure-store';
 import * as Location from 'expo-location';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
@@ -25,7 +25,30 @@ export default function LoginScreen() {
   const scrollViewRef = useRef<React.ElementRef<typeof ScrollView>>(null);
 
   const router = useRouter();
+  const params = useLocalSearchParams<{ error?: string; locations?: string }>();
   const { colors, theme } = useAppTheme();
+
+  useEffect(() => {
+    if (params.error === 'Location Restricted') {
+      const rawLocations = typeof params.locations === 'string' ? params.locations : '';
+      const list = rawLocations.split('\n').map((item: string) => item.trim()).filter(Boolean);
+      setLoginStep('error');
+      setStatusText('Location Restricted');
+      setErrorAnim(true);
+      setModalTitle('Location Restricted');
+      setModalMessage('You are not in location. Please reach below location to login:');
+      setModalLocations(list.length ? list : ['Allowed Workplace Area']);
+      setModalVisible(true);
+    } else if (params.error) {
+      setLoginStep('error');
+      setStatusText(String(params.error));
+      setErrorAnim(true);
+      setModalTitle(String(params.error));
+      setModalMessage('Access is restricted to authorized workplace locations only.');
+      setModalLocations([]);
+      setModalVisible(true);
+    }
+  }, [params.error, params.locations]);
 
   useEffect(() => {
     const subscription = Keyboard.addListener('keyboardDidShow', () => {
@@ -36,18 +59,26 @@ export default function LoginScreen() {
 
   useEffect(() => {
     let active = true;
+    if (params.error) return;
     Promise.all([
       SecureStore.getItemAsync('employee_id'),
       SecureStore.getItemAsync('full_name'),
-    ]).then(([employeeId, fullName]) => {
-      if (active && employeeId && fullName) router.replace('/Home');
+      SecureStore.getItemAsync('password'),
+    ]).then(([employeeId, fullName, savedPassword]) => {
+      if (!active) return;
+      if (employeeId && !savedPassword) {
+        setEmpID(employeeId);
+      }
+      if (employeeId && fullName && savedPassword) {
+        router.replace('/Home');
+      }
     }).catch((error) => {
       console.error('Unable to check saved sign-in details:', error);
     });
     return () => {
       active = false;
     };
-  }, [router]);
+  }, [params.error, router]);
 
   const closeModal = () => {
     setModalVisible(false);
@@ -185,6 +216,8 @@ export default function LoginScreen() {
         await SecureStore.setItemAsync("ces", sec);
         await SecureStore.setItemAsync("tl", lType);
         await SecureStore.setItemAsync("currentgeocord", geoAddr);
+        await SecureStore.setItemAsync("current_latitude", String(latitude));
+        await SecureStore.setItemAsync("current_longitude", String(longitude));
 
         router.replace('/Home');
         return;

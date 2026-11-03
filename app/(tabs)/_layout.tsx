@@ -1,9 +1,11 @@
 import { Tabs, usePathname, useRouter, type Href } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   AccessibilityInfo,
   Animated,
+  AppState,
   BackHandler,
   Easing,
   Image,
@@ -16,6 +18,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
+import * as Location from 'expo-location';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme, type ThemePreference } from '@/contexts/ThemeContext';
@@ -51,6 +54,8 @@ export default function TabLayout() {
   const [employeeId, setEmployeeId] = useState('');
   const [credentialsReady, setCredentialsReady] = useState(false);
   const [reduceMotion, setReduceMotion] = useState(false);
+  const verifiedPathRef = useRef('');
+  const checkIdRef = useRef(0);
   const routeHistory = useRef<string[]>([]);
   const previousUiMode = useRef(uiMode);
   const sidebarWidth = useRef(new Animated.Value(250)).current;
@@ -202,10 +207,10 @@ export default function TabLayout() {
     setSidebarProfileOpen((value) => !value);
   };
 
-  const logout = async () => {
+  const clearSessionAndKickToLogin = useCallback(async (error?: string, locations?: string) => {
     closeProfileMenu();
     try {
-      await Promise.all([
+      await Promise.allSettled([
         SecureStore.deleteItemAsync('employee_id'),
         SecureStore.deleteItemAsync('full_name'),
         SecureStore.deleteItemAsync('password'),
@@ -218,11 +223,167 @@ export default function TabLayout() {
         SecureStore.deleteItemAsync('sop'),
         SecureStore.deleteItemAsync('ces'),
         SecureStore.deleteItemAsync('tl'),
+        SecureStore.deleteItemAsync('currentgeocord'),
+        SecureStore.deleteItemAsync('current_latitude'),
+        SecureStore.deleteItemAsync('current_longitude'),
       ]);
-      setFullName('');
-      setEmployeeId('');
-      closeProfileMenu();
+    } catch (e) {
+      console.error(e);
+    }
+    setFullName('');
+    setEmployeeId('');
+    verifiedPathRef.current = '';
+    if (error) {
+      router.replace({ pathname: '/', params: { error, locations: locations || '' } });
+    } else {
       router.replace('/');
+    }
+  }, [closeProfileMenu, router]);
+
+  const verifyLocationAndCredentials = useCallback(async (targetPath: string) => {
+    if (targetPath === '/') return;
+    const currentCheckId = ++checkIdRef.current;
+
+    try {
+      const [savedEmpId, savedPassword] = await Promise.all([
+        SecureStore.getItemAsync('employee_id'),
+        SecureStore.getItemAsync('password'),
+      ]);
+
+      if (!savedEmpId || !savedPassword) {
+        console.log('Background verification failed: Missing saved credentials');
+        if (currentCheckId === checkIdRef.current) {
+          await clearSessionAndKickToLogin();
+        }
+        return;
+      }
+
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        const req = await Location.requestForegroundPermissionsAsync();
+        if (req.status !== 'granted') {
+          console.log('Background verification failed: Location permission denied');
+          if (currentCheckId === checkIdRef.current) {
+            await clearSessionAndKickToLogin('Location Permission Required');
+          }
+          return;
+        }
+      }
+
+      const servicesEnabled = await Location.hasServicesEnabledAsync();
+      if (!servicesEnabled) {
+        console.log('Background verification failed: GPS / Location services disabled');
+        if (currentCheckId === checkIdRef.current) {
+          await clearSessionAndKickToLogin('GPS / Location Disabled');
+        }
+        return;
+      }
+
+      let location = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+      ]);
+      if (!location) {
+        location = await Location.getLastKnownPositionAsync({});
+      }
+      if (!location) {
+        location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Lowest });
+      }
+
+      if (currentCheckId !== checkIdRef.current) return;
+
+      if (!location) {
+        console.log('Background verification error: Unable to determine location fix');
+        return;
+      }
+
+      const latitude = location.coords.latitude;
+      const longitude = location.coords.longitude;
+      console.log(`Checking location for screen "${targetPath}": Coordinates (${latitude}, ${longitude})`);
+
+      await SecureStore.setItemAsync('current_latitude', String(latitude));
+      await SecureStore.setItemAsync('current_longitude', String(longitude));
+
+      const response = await fetch('https://gtiappsbackend.vercel.app/api/geologin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          employeeId: savedEmpId,
+          password: savedPassword,
+          latitude,
+          longitude,
+        }),
+      });
+
+      if (currentCheckId !== checkIdRef.current) return;
+
+      const data = await response.json();
+
+      if (response.status === 403 || data.message === 'Location Restricted') {
+        console.log('Location check status: ERROR - Location Restricted', {
+          latitude,
+          longitude,
+          allowedLocations: data.allowedLocations,
+        });
+        const rawLocations = typeof data.allowedLocations === 'string' ? data.allowedLocations : '';
+        await clearSessionAndKickToLogin('Location Restricted', rawLocations);
+        return;
+      }
+
+      if (response.status === 401 || data.message === 'Invalid Credentials') {
+        console.log('Location check status: ERROR - Invalid Credentials', { employeeId: savedEmpId });
+        await clearSessionAndKickToLogin('Invalid Credentials');
+        return;
+      }
+
+      if (response.ok && data.message === 'Login Success') {
+        console.log('Location check status: SUCCESS', {
+          latitude,
+          longitude,
+          address: data.data?.currentgeocord || data.data?.GeoAddress,
+        });
+        const toStr = (val: unknown) => (val === null || val === undefined ? '' : String(val));
+        const geoAddr = toStr(data.data?.currentgeocord || data.data?.GeoAddress || data.data?.Address || data.data?.MatchedAddress);
+        if (geoAddr) {
+          await SecureStore.setItemAsync('currentgeocord', geoAddr);
+        }
+        verifiedPathRef.current = targetPath;
+        return;
+      }
+
+      console.log('Location check status: ERROR -', data.message || 'Verification Failed');
+      await clearSessionAndKickToLogin(data.message || 'Verification Failed');
+    } catch (err) {
+      if (currentCheckId !== checkIdRef.current) return;
+      console.log('Background verification network/system error:', err);
+    }
+  }, [clearSessionAndKickToLogin]);
+
+  useEffect(() => {
+    if (pathname === '/') {
+      verifiedPathRef.current = '';
+      return;
+    }
+    if (verifiedPathRef.current !== pathname) {
+      void verifyLocationAndCredentials(pathname);
+    }
+  }, [pathname, verifyLocationAndCredentials]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active' && pathname !== '/') {
+        void verifyLocationAndCredentials(pathname);
+      }
+    });
+    return () => subscription.remove();
+  }, [pathname, verifyLocationAndCredentials]);
+
+  const logout = async () => {
+    closeProfileMenu();
+    try {
+      await clearSessionAndKickToLogin();
     } catch (error) {
       console.error('Unable to clear saved credentials during logout:', error);
       Alert.alert('Unable to log out', 'Your saved sign-in details could not be cleared. Please try again.');
@@ -694,7 +855,7 @@ const styles = StyleSheet.create({
   body: { flex: 1, flexDirection: 'row', minHeight: 0 },
   desktopSidebar: { margin: 14, marginRight: 0, borderRadius: 22, borderWidth: 1, overflow: 'hidden' },
   navigationLayout: { flex: 1, minHeight: 0 },
-  screenArea: { flex: 1, minWidth: 0, overflow: 'hidden' },
+  screenArea: { flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' },
   modernFooter: { minHeight: 72, borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 7, justifyContent: 'center' },
   modernFooterNavigation: { width: '100%', maxWidth: 600, alignSelf: 'center', height: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10 },
   modernFooterItem: { flex: 1, minWidth: 0, height: '100%', alignItems: 'center', justifyContent: 'center' },
