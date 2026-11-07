@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme, type AppTheme } from '@/contexts/ThemeContext';
+import { verifyLocationForScreen } from '@/utils/locationVerifier';
 
 const API_BASE_URL = 'https://gtiappsbackend.vercel.app';
 
@@ -64,10 +65,32 @@ export default function Home() {
   const [summary, setSummary] = useState<DashboardSummary>({ productionCount: 0, qcCount: 0, totalRejection: 0 });
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [summaryError, setSummaryError] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
   const { colors, theme, uiMode } = useAppTheme();
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await verifyLocationForScreen('/Home').catch(() => null);
+      const [name, pos, nextSummary] = await Promise.all([
+        SecureStore.getItemAsync('full_name').catch(() => null),
+        SecureStore.getItemAsync('position').catch(() => null),
+        getDashboardSummary(selectedDate),
+      ]);
+      if (name) setFullName(name);
+      if (pos) setPosition(pos);
+      setSummary(nextSummary);
+      setSummaryError('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load dashboard summary.';
+      setSummaryError(message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [selectedDate]);
 
   useEffect(() => {
     SecureStore.getItemAsync('full_name').then((name) => {
@@ -110,6 +133,8 @@ export default function Home() {
           selectedDate={selectedDate}
           summaryLoading={summaryLoading}
           summaryError={summaryError}
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
           onDatePress={() => setDatePickerVisible(true)}
         />
         <DateTimePickerModal
@@ -136,6 +161,14 @@ export default function Home() {
         style={styles.modernScroll}
         contentContainerStyle={[styles.modernContent, { paddingBottom: 16 + insets.bottom }]}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            colors={[palette.header]}
+            tintColor={palette.header}
+          />
+        }
       >
         <View style={[styles.blueHeader, { backgroundColor: palette.header, paddingTop: insets.top + (compact ? 31.5 : 37.5), minHeight: insets.top + (compact ? 186 : 210) }]}>
           <Text style={styles.appTitle}>Production App</Text>
@@ -205,7 +238,13 @@ export default function Home() {
           <View style={styles.summaryCards}>
             <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionCount)} label="Production" tint="#31a779" background={palette.greenTint} textColor={palette.text} />
             <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.qcCount)} label="QC" tint="#3687cf" background={palette.blueTint} textColor={palette.text} />
-            <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.totalRejection)} label="Total Rejection" tint="#dd5360" background={palette.redTint} textColor={palette.text} />
+            <SummaryCard
+              value={summaryLoading ? '…' : summaryError ? '—' : String(summary.totalRejection)}
+              label="Total Rejection"
+              tint={summary.productionCount === summary.qcCount ? (theme === 'dark' ? '#31a779' : '#208b5f') : palette.yellowText}
+              background={summary.productionCount === summary.qcCount ? palette.greenTint : palette.yellowTint}
+              textColor={palette.text}
+            />
           </View>
           {summaryError ? <Text style={[styles.summaryError, { color: palette.muted }]}>{summaryError}</Text> : null}
         </View>
@@ -264,19 +303,26 @@ function SummaryCard({ value, label, tint, background, textColor }: {
   );
 }
 
-function ClassicHome({ fullName, summary, selectedDate, summaryLoading, summaryError, onDatePress }: {
+function ClassicHome({ fullName, summary, selectedDate, summaryLoading, summaryError, refreshing, onRefresh, onDatePress }: {
   fullName: string;
   summary: DashboardSummary;
   selectedDate: Date;
   summaryLoading: boolean;
   summaryError: string;
+  refreshing: boolean;
+  onRefresh: () => void;
   onDatePress: () => void;
 }) {
-  const { colors } = useAppTheme();
+  const { colors, theme } = useAppTheme();
   const router = useRouter();
 
   return (
-    <AppScreen title="Welcome back" subtitle="Your operations workspace, at a glance.">
+    <AppScreen
+      title="Welcome back"
+      subtitle="Your operations workspace, at a glance."
+      onRefresh={onRefresh}
+      refreshing={refreshing}
+    >
       <GlassPanel style={classicStyles.hero}>
         <View style={classicStyles.heroCopy}>
           <View style={[classicStyles.eyebrow, { backgroundColor: colors.accentSoft }]}>
@@ -309,7 +355,13 @@ function ClassicHome({ fullName, summary, selectedDate, summaryLoading, summaryE
       <View style={classicStyles.summaryCards}>
         <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.productionCount)} label="Production" tint="#31a779" background={colors.accentSoft} textColor={colors.text} />
         <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.qcCount)} label="QC" tint="#3687cf" background="rgba(54,135,207,0.12)" textColor={colors.text} />
-        <SummaryCard value={summaryLoading ? '…' : summaryError ? '—' : String(summary.totalRejection)} label="Total Rejection" tint={colors.danger} background={`${colors.danger}12`} textColor={colors.text} />
+        <SummaryCard
+          value={summaryLoading ? '…' : summaryError ? '—' : String(summary.totalRejection)}
+          label="Total Rejection"
+          tint={summary.productionCount === summary.qcCount ? (theme === 'dark' ? '#31a779' : '#208b5f') : (theme === 'dark' ? '#f3b34c' : '#b2740a')}
+          background={summary.productionCount === summary.qcCount ? (theme === 'dark' ? 'rgba(49,167,121,0.18)' : '#edf8f2') : (theme === 'dark' ? 'rgba(230, 162, 60, 0.18)' : '#fff8e6')}
+          textColor={colors.text}
+        />
       </View>
       {summaryError ? <Text style={[styles.summaryError, { color: colors.muted }]}>{summaryError}</Text> : null}
     </AppScreen>
@@ -322,7 +374,7 @@ function ClassicQuickAction({ icon, title, subtitle, onPress }: {
   subtitle: string;
   onPress: () => void;
 }) {
-  const { colors } = useAppTheme();
+  const { colors, theme } = useAppTheme();
   return (
     <Pressable onPress={onPress} style={({ pressed, hovered }) => [classicStyles.actionPressable, hovered && classicStyles.actionHovered, pressed && styles.pressed]}>
       <GlassPanel style={classicStyles.actionCard}>
@@ -352,6 +404,8 @@ function getDashboardPalette(theme: AppTheme) {
       greenTint: 'rgba(49,167,121,0.18)',
       redTint: 'rgba(221,83,96,0.18)',
       purpleTint: 'rgba(138,106,208,0.18)',
+      yellowTint: 'rgba(230, 162, 60, 0.18)',
+      yellowText: '#f3b34c',
     };
   }
   return {
@@ -365,6 +419,8 @@ function getDashboardPalette(theme: AppTheme) {
     greenTint: '#edf8f2',
     redTint: '#fff0f1',
     purpleTint: '#f4f0fb',
+    yellowTint: '#fff8e6',
+    yellowText: '#b2740a',
   };
 }
 

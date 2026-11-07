@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  GestureResponderEvent,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -18,8 +19,10 @@ import { CameraView, useCameraPermissions, scanFromURLAsync } from 'expo-camera'
 import * as ImagePicker from 'expo-image-picker';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import * as SecureStore from 'expo-secure-store';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppScreen } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
+import { verifyLocationForScreen } from '@/utils/locationVerifier';
 
 const OPTIONS_API_URL = 'https://gtiappsbackend.vercel.app/api/casting-rejection/get-options';
 const DIMENSIONS_OPTIONS_API_URL = 'https://gtiappsbackend.vercel.app/api/MG_Daily_Rejection/options/get-options';
@@ -288,6 +291,25 @@ function isSectionCompleteFromRecord(record: Record<string, unknown>, columns: s
   });
 }
 
+function isSectionFormComplete(
+  section: EntrySection,
+  form: Record<FormKey, string>,
+  part: ScannedPart | null,
+): boolean {
+  const columns = section === 'production' ? productionCompleteColumns : qcCompleteColumns;
+  return columns.every((column) => {
+    const key = rejectionColumnToFormKey[column];
+    if (!key) return false;
+    let value = form[key];
+    if (key === 'leakCode' && part) {
+      value = `${part.partNo}|${part.serialNo}`;
+    } else if (key === 'qty') {
+      value = value || '1';
+    }
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
 function rejectionValueToForm(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (value instanceof Date && !Number.isNaN(value.getTime())) return formatDate(value);
@@ -313,12 +335,20 @@ export function RejectionEntryView({
   hideScanner = false,
 }: RejectionEntryViewProps) {
   const { colors } = useAppTheme();
-  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
   const [permission, requestPermission] = useCameraPermissions();
   const [part, setPart] = useState<ScannedPart | null>(initialPart || null);
   const [details, setDetails] = useState<Record<string, unknown> | null>(null);
   const [form, setForm] = useState(initialForm);
   const [cameraActive, setCameraActive] = useState(false);
+  const [zoom, setZoom] = useState(0);
+  const [torch, setTorch] = useState(false);
+  const initialPinchDist = useRef<number | null>(null);
+  const initialPinchZoom = useRef<number>(0);
+  const sliderTouchStartX = useRef<number>(0);
+  const sliderTouchStartZoom = useRef<number>(0);
+  const HORIZONTAL_SLIDER_WIDTH = 180;
   const [lookupLoading, setLookupLoading] = useState(false);
   const [optionLists, setOptionLists] = useState<Record<string, SelectOption[]>>({ entryStatuses });
   const [optionErrors, setOptionErrors] = useState<Record<string, string>>({});
@@ -349,6 +379,7 @@ export function RejectionEntryView({
   const allSectionsComplete = completedSections.production && completedSections.qc;
   const sectionFields = activeSection === 'production' ? productionFields : qcFields;
   const sectionComplete = completedSections[activeSection];
+  const isScanning = cameraActive && !hideScanner && !part;
 
   const scrollToField = useCallback((key: FormKey) => {
     const offset = fieldOffsets.current[key];
@@ -392,14 +423,70 @@ export function RejectionEntryView({
 
   const canEditSection = useCallback((section: EntrySection) => {
     if (isAdmin) return true;
-    if (allSectionsComplete) return false;
-    if (isProd) return section === 'production';
-    if (isQC) return section === 'qc';
-    return true;
-  }, [isAdmin, allSectionsComplete, isProd, isQC]);
+    if (isProd) return section === 'production' && !completedSections.production;
+    if (isQC) return section === 'qc' && !completedSections.qc;
+    return false;
+  }, [isAdmin, isProd, isQC, completedSections.production, completedSections.qc]);
 
   const isCurrentSectionEditable = canEditSection(activeSection);
   const formLocked = !isCurrentSectionEditable;
+
+  const sectionFormComplete = useMemo(() => {
+    return isSectionFormComplete(activeSection, form, part);
+  }, [activeSection, form, part]);
+
+  const canSubmit = !submitting && !formLocked && !lookupLoading && !!part?.productId && sectionFormComplete;
+
+  const handleHorizontalSliderGrant = (e: GestureResponderEvent) => {
+    sliderTouchStartX.current = e.nativeEvent.pageX;
+    const clampedX = Math.max(0, Math.min(HORIZONTAL_SLIDER_WIDTH, e.nativeEvent.locationX));
+    const directZoom = Number((clampedX / HORIZONTAL_SLIDER_WIDTH).toFixed(2));
+    const targetZoom = Math.min(1, Math.max(0, directZoom));
+    sliderTouchStartZoom.current = targetZoom;
+    setZoom(targetZoom);
+  };
+
+  const handleHorizontalSliderMove = (e: GestureResponderEvent) => {
+    const deltaX = e.nativeEvent.pageX - sliderTouchStartX.current;
+    const zoomDelta = deltaX / HORIZONTAL_SLIDER_WIDTH;
+    const nextZoom = Math.min(1, Math.max(0, sliderTouchStartZoom.current + zoomDelta));
+    setZoom(Number(nextZoom.toFixed(2)));
+  };
+
+  const stepZoom = (delta: number) => {
+    setZoom((prev) => Math.min(1, Math.max(0, Number((prev + delta).toFixed(2)))));
+  };
+
+  const handleTouchStart = (e: GestureResponderEvent) => {
+    if (e.nativeEvent.touches.length === 2) {
+      const [t1, t2] = e.nativeEvent.touches;
+      const dist = Math.hypot(t1.pageX - t2.pageX, t1.pageY - t2.pageY);
+      initialPinchDist.current = dist;
+      initialPinchZoom.current = zoom;
+    }
+  };
+
+  const handleTouchMove = (e: GestureResponderEvent) => {
+    if (e.nativeEvent.touches.length === 2) {
+      const [t1, t2] = e.nativeEvent.touches;
+      const dist = Math.hypot(t1.pageX - t2.pageX, t1.pageY - t2.pageY);
+      if (initialPinchDist.current === null || initialPinchDist.current <= 0) {
+        initialPinchDist.current = dist;
+        initialPinchZoom.current = zoom;
+        return;
+      }
+      const factor = dist / initialPinchDist.current;
+      const delta = (factor - 1) * 0.8;
+      const nextZoom = Math.min(1, Math.max(0, initialPinchZoom.current + delta));
+      setZoom(Number(nextZoom.toFixed(2)));
+    }
+  };
+
+  const handleTouchEnd = (e: GestureResponderEvent) => {
+    if (e.nativeEvent.touches.length < 2) {
+      initialPinchDist.current = null;
+    }
+  };
 
   useEffect(() => {
     SecureStore.getItemAsync('logintype').then(async (val) => {
@@ -408,6 +495,8 @@ export function RejectionEntryView({
       setLoginType(type);
       if (type === 'qc') {
         setActiveSection('qc');
+      } else if (type === 'prod') {
+        setActiveSection('production');
       }
     }).catch(() => {});
   }, []);
@@ -537,7 +626,7 @@ export function RejectionEntryView({
     return payload.data as Record<string, unknown>;
   }, []);
 
-  const loadPart = useCallback((scanned: ScannedPart) => {
+  const loadPart = useCallback(async (scanned: ScannedPart) => {
     setActiveSection(isQC ? 'qc' : 'production');
     setCompletedSections({ production: false, qc: false });
     setSubmitMessage('');
@@ -548,50 +637,59 @@ export function RejectionEntryView({
       employees: [],
       dimensions: [],
     }));
-    void (async () => {
-      await loadPartDetails(scanned);
-      try {
-        const saved = await fetchSavedRejection(scanned.transId);
-        setForm((current) => {
-          const next = { ...current };
-          for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
-            if (saved[column] === undefined || saved[column] === null) continue;
-            const value = rejectionValueToForm(saved[column]);
-            if (value.trim()) next[key] = value;
-          }
-          next.leakCode = `${scanned.partNo}|${scanned.serialNo}`;
-          next.qty = '1';
-          return next;
-        });
-        const productionDone = isSectionCompleteFromRecord(saved, productionCompleteColumns);
-        const qcDone = isSectionCompleteFromRecord(saved, qcCompleteColumns);
-        setCompletedSections({ production: productionDone, qc: qcDone });
-        if (isQC) {
-          setActiveSection('qc');
-        } else if (isProd) {
-          setActiveSection('production');
-        } else {
-          setActiveSection(productionDone && !qcDone ? 'qc' : 'production');
+    await loadPartDetails(scanned);
+    try {
+      const saved = await fetchSavedRejection(scanned.transId);
+      setForm((current) => {
+        const next = { ...current };
+        for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
+          if (saved[column] === undefined || saved[column] === null) continue;
+          const value = rejectionValueToForm(saved[column]);
+          if (value.trim()) next[key] = value;
         }
-        if (productionDone && qcDone) {
-          if (isAdmin) {
-            setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is complete — Admin edit access enabled.`);
-          } else {
-            setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is fully complete — all inputs are locked.`);
-          }
-        } else if (productionDone) {
-          if (isProd) {
-            setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). QC tab is view-only.`);
-          } else {
-            setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Now complete the QC tab.`);
-          }
+        next.leakCode = `${scanned.partNo}|${scanned.serialNo}`;
+        next.qty = '1';
+        return next;
+      });
+      const productionDone = isSectionCompleteFromRecord(saved, productionCompleteColumns);
+      const qcDone = isSectionCompleteFromRecord(saved, qcCompleteColumns);
+      setCompletedSections({ production: productionDone, qc: qcDone });
+      if (isQC) {
+        setActiveSection('qc');
+      } else if (isProd) {
+        setActiveSection('production');
+      } else {
+        setActiveSection(productionDone && !qcDone ? 'qc' : 'production');
+      }
+      if (productionDone && qcDone) {
+        if (isAdmin) {
+          setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is complete — Admin edit access enabled.`);
+        } else {
+          setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is fully complete — all inputs are locked.`);
+        }
+      } else if (productionDone) {
+        if (isProd) {
+          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}) — Production is locked and view-only.`);
+        } else if (isQC) {
+          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Complete and save the QC tab.`);
+        } else {
+          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Now complete the QC tab.`);
+        }
+      } else {
+        if (!isAdmin && !isProd && !isQC) {
+          setSubmitMessage(`Loaded RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}) — View only access.`);
+        } else if (isQC) {
+          setSubmitMessage(`Loaded RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Production is pending.`);
         } else {
           setSubmitMessage(`Loaded existing RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Review and save if needed.`);
         }
-      } catch (reloadError) {
-        console.log('[RejectionEntry] no existing RejectionEntry:', scanned.transId);
       }
-    })();
+    } catch (reloadError) {
+      console.log('[RejectionEntry] no existing RejectionEntry:', scanned.transId);
+      if (!isAdmin && !isProd && !isQC) {
+        setSubmitMessage('View-only access for current user role.');
+      }
+    }
   }, [loadPartDetails, fetchSavedRejection, isAdmin, isProd, isQC]);
 
   useEffect(() => {
@@ -603,14 +701,17 @@ export function RejectionEntryView({
   const onBarcodeScanned = useCallback(({ data }: { data: string }) => {
     if (scanLock.current) return;
     scanLock.current = true;
-    setCameraActive(false);
     setScanError('');
     const scanned = getQrPart(data);
     if (!scanned) {
-      setScanError('QR format was not recognized. It must be partNo|serialNo.');
-      scanLock.current = false;
+      setScanError('Invalid QR format. It must be PartNo|SerialNo.');
+      setTimeout(() => {
+        scanLock.current = false;
+      }, 1800);
       return;
     }
+    setCameraActive(false);
+    setTorch(false);
     loadPart(scanned);
   }, [loadPart]);
 
@@ -643,6 +744,16 @@ export function RejectionEntryView({
     }
   }, [part?.productId]);
 
+  const handleScreenRefresh = useCallback(async () => {
+    if (isScanning) return;
+    const optionListToFetch = part?.productId ? optionTypes : independentOptionTypes;
+    await Promise.all([
+      verifyLocationForScreen('/RejectionEntry').catch(() => null),
+      part ? loadPart(part) : Promise.resolve(),
+      Promise.all(optionListToFetch.map((type) => retryOptions(type))),
+    ]);
+  }, [isScanning, part, loadPart, retryOptions]);
+
   const setField = (key: FormKey, value: string) => {
     setForm((current) => ({ ...current, [key]: value }));
   };
@@ -669,6 +780,8 @@ export function RejectionEntryView({
   const startScan = async () => {
     setScanError('');
     scanLock.current = false;
+    setZoom(0);
+    setTorch(false);
     if (permission?.granted) {
       setCameraActive(true);
       return;
@@ -748,13 +861,8 @@ export function RejectionEntryView({
       setSubmitMessage('Product ID is missing. Check the Product Matrix lookup before saving.');
       return;
     }
-    const optionalFieldKeys: FormKey[] = ['dimension', 'actual'];
-    const requiredFields = (section === 'production' ? productionFields : qcFields).filter(
-      (field) => !optionalFieldKeys.includes(field.key),
-    );
-    const missingField = requiredFields.find((field) => !form[field.key].trim());
-    if (missingField) {
-      setSubmitMessage(`Complete all ${section === 'production' ? 'Production' : 'QC'} fields before saving.`);
+    if (!isSectionFormComplete(section, form, part)) {
+      setSubmitMessage(`Complete all ${section === 'production' ? 'Production' : 'QC'} mandatory fields before saving.`);
       return;
     }
     Keyboard.dismiss();
@@ -793,7 +901,9 @@ export function RejectionEntryView({
         throw new Error(message);
       }
       setCompletedSections((current) => ({ ...current, [section]: true }));
-      setActiveSection('qc');
+      if (isAdmin && section === 'production') {
+        setActiveSection('qc');
+      }
 
       if (section === 'production') {
         const savedTransId = part.transId;
@@ -814,7 +924,9 @@ export function RejectionEntryView({
             return next;
           });
           if (isProd) {
-            setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed. QC tab is view-only for Production.`);
+            setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed. Production is locked and view-only.`);
+          } else if (isAdmin) {
+            setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed. Continue with QC.`);
           } else {
             setSubmitMessage(`Production saved${savedEntryId ? ` (Entry #${savedEntryId})` : ''} — values refreshed from the RejectionEntry table. Now complete the QC tab.`);
           }
@@ -826,7 +938,11 @@ export function RejectionEntryView({
         return;
       }
 
-      setSubmitMessage('QC saved successfully.');
+      if (isQC) {
+        setSubmitMessage('QC saved successfully. QC is locked and view-only.');
+      } else {
+        setSubmitMessage('QC saved successfully.');
+      }
       onSaved?.();
     } catch (error) {
       console.error(`Unable to save rejection ${section} section:`, error);
@@ -953,164 +1069,275 @@ export function RejectionEntryView({
     return currentOptions.filter((option) => option.label.toLocaleLowerCase().includes(query));
   }, [currentOptions, optionSearch]);
 
+  if (isScanning) {
+    return (
+      <View
+        style={[
+          styles.inScreenCameraWrapper,
+          { paddingTop: insets.top, backgroundColor: '#000' },
+        ]}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+      >
+        <CameraView
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          zoom={zoom}
+          enableTorch={torch}
+          barcodeScannerSettings={{ barcodeTypes: ['qr', 'datamatrix', 'code128', 'code39', 'pdf417'] }}
+          onBarcodeScanned={onBarcodeScanned}
+        />
+
+        <View style={[styles.inScreenCameraHeader, { paddingTop: Math.max(insets.top, 14) + 4 }]}>
+          <Pressable
+            onPress={() => {
+              setCameraActive(false);
+              setTorch(false);
+              setScanError('');
+            }}
+            style={styles.inScreenHeaderBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Close camera"
+          >
+            <Ionicons name="close" size={22} color="#fff" />
+          </Pressable>
+
+          <View style={styles.inScreenHeaderCenter}>
+            <Text style={styles.inScreenHeaderTitle}>Scan Part QR Code</Text>
+            <Text style={styles.inScreenHeaderSubtitle}>Align QR code inside the frame</Text>
+          </View>
+
+          <Pressable
+            onPress={() => setTorch((prev) => !prev)}
+            style={[styles.inScreenHeaderBtn, torch && styles.inScreenHeaderBtnActive]}
+            accessibilityRole="button"
+            accessibilityLabel="Toggle flashlight"
+          >
+            <Ionicons name={torch ? 'flash' : 'flash-off'} size={20} color={torch ? '#f59e0b' : '#fff'} />
+          </Pressable>
+        </View>
+
+        <View pointerEvents="none" style={styles.inScreenReticleWrapper}>
+          <View style={styles.inScreenReticle}>
+            <View style={[styles.inScreenCorner, styles.cornerTL]} />
+            <View style={[styles.inScreenCorner, styles.cornerTR]} />
+            <View style={[styles.inScreenCorner, styles.cornerBL]} />
+            <View style={[styles.inScreenCorner, styles.cornerBR]} />
+          </View>
+        </View>
+
+        <View style={styles.cameraBottomOverlay}>
+          {scanError ? (
+            <View style={styles.cameraErrorBadge}>
+              <Ionicons name="alert-circle" size={16} color="#ef4444" />
+              <Text style={styles.cameraErrorText}>{scanError}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.horizontalZoomBar}>
+            <View style={styles.zoomPresetRowHorizontal}>
+              {[
+                { label: '1x', val: 0 },
+                { label: '2x', val: 0.25 },
+                { label: '5x', val: 0.6 },
+                { label: 'MAX', val: 1.0 },
+              ].map((p) => {
+                const isActive = Math.abs(zoom - p.val) < 0.08;
+                return (
+                  <Pressable
+                    key={p.label}
+                    onPress={() => setZoom(p.val)}
+                    style={[styles.zoomPresetBadgeHorizontal, isActive && styles.zoomPresetBadgeActiveHorizontal]}
+                  >
+                    <Text style={[styles.zoomPresetTextHorizontal, isActive && styles.zoomPresetTextActiveHorizontal]}>{p.label}</Text>
+                  </Pressable>
+                );
+              })}
+              <View style={styles.zoomValueBadgeHorizontal}>
+                <Text style={styles.zoomValueTextHorizontal}>
+                  {zoom >= 0.98 ? 'MAX' : `${(1 + zoom * 7).toFixed(1)}x`}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.horizontalSliderRow}>
+              <Pressable
+                onPress={() => stepZoom(-0.1)}
+                style={styles.zoomStepBtnHorizontal}
+                accessibilityRole="button"
+                accessibilityLabel="Zoom out"
+              >
+                <Ionicons name="remove" size={18} color="#fff" />
+              </Pressable>
+
+              <View
+                style={styles.horizontalSliderTouchArea}
+                onStartShouldSetResponder={() => true}
+                onMoveShouldSetResponder={() => true}
+                onResponderTerminationRequest={() => false}
+                onResponderGrant={handleHorizontalSliderGrant}
+                onResponderMove={handleHorizontalSliderMove}
+              >
+                <View style={styles.horizontalSliderTrack}>
+                  <View style={[styles.horizontalSliderFill, { width: `${Math.round(zoom * 100)}%` }]} />
+                  <View style={[styles.horizontalSliderThumb, { left: Math.round(zoom * 162) }]} />
+                </View>
+              </View>
+
+              <Pressable
+                onPress={() => stepZoom(0.1)}
+                style={styles.zoomStepBtnHorizontal}
+                accessibilityRole="button"
+                accessibilityLabel="Zoom in"
+              >
+                <Ionicons name="add" size={18} color="#fff" />
+              </Pressable>
+            </View>
+          </View>
+
+          <Pressable
+            onPress={() => void pickAndScanImage()}
+            style={({ pressed }) => [styles.inScreenGalleryBtn, pressed && styles.pressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Upload QR code from photo gallery"
+          >
+            <Ionicons name="images-outline" size={18} color="#fff" />
+            <Text style={styles.inScreenGalleryText}>Upload QR from Gallery</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <AppScreen
       scrollRef={scrollViewRef}
+      onRefresh={handleScreenRefresh}
       contentStyle={keyboardHeight > 0 ? { paddingBottom: keyboardHeight + 80 } : undefined}
       title="Rejection Entry"
       subtitle="Review the scanned part and complete the rejection details."
     >
       <View style={[styles.scanCard, { backgroundColor: colors.surfaceSolid, borderColor: colors.border }]}>
-        <View style={styles.sectionHeading}>
-          <View style={[styles.headingIcon, { backgroundColor: colors.accentSoft }]}>
-            <Ionicons name={part ? 'cube-outline' : 'qr-code-outline'} size={21} color={colors.accent} />
-          </View>
-          <View style={styles.headingCopy}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>{part ? 'Part Scanned' : 'Scan Part'}</Text>
-            <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>
-              {part ? 'Review the scanned part and complete the rejection details.' : cameraActive ? 'Point the camera at the part QR code.' : 'Start by scanning the QR code on the part.'}
-            </Text>
-          </View>
-          {part ? (
-            onClose ? (
-              <Pressable
-                onPress={onClose}
-                accessibilityRole="button"
-                accessibilityLabel="Close form"
-                style={styles.headingIconButton}
-              >
-                <Ionicons name="close-circle-outline" size={22} color={colors.accent} />
-              </Pressable>
-            ) : !hideScanner ? (
-              <Pressable
-                onPress={resetScan}
-                accessibilityRole="button"
-                accessibilityLabel="Return to scan part"
-                style={styles.headingIconButton}
-              >
-                <Ionicons name="close-circle-outline" size={22} color={colors.accent} />
-              </Pressable>
-            ) : null
-          ) : null}
-        </View>
-
-        {part ? (
-          <View style={[styles.scannedPart, { backgroundColor: colors.accentSoft }]}>
-            <View style={[styles.scannedIcon, { backgroundColor: colors.surfaceSolid }]}>
-              <Ionicons name="cube-outline" size={21} color={colors.accent} />
+          <View style={styles.sectionHeading}>
+            <View style={[styles.headingIcon, { backgroundColor: colors.accentSoft }]}>
+              <Ionicons name={part ? 'cube-outline' : 'qr-code-outline'} size={21} color={colors.accent} />
             </View>
             <View style={styles.headingCopy}>
-              <Text style={[styles.scannedLabel, { color: colors.muted }]}>PART NUMBER</Text>
-              <Text style={[styles.scannedNumber, { color: colors.text }]}>{part.partNo}</Text>
-              <Text style={[styles.scannedMeta, { color: colors.muted }]}>Serial No · {part.serialNo}</Text>
-            </View>
-            {lookupLoading ? <ActivityIndicator color={colors.accent} /> : null}
-          </View>
-        ) : cameraActive && !hideScanner ? (
-          <View style={[styles.cameraFrame, { borderColor: colors.border }]}>
-            <CameraView
-              style={StyleSheet.absoluteFill}
-              facing="back"
-              barcodeScannerSettings={{ barcodeTypes: ['qr', 'datamatrix', 'code128', 'code39', 'pdf417'] }}
-              onBarcodeScanned={onBarcodeScanned}
-            />
-            <Pressable
-              onPress={() => setCameraActive(false)}
-              style={styles.cameraCloseButton}
-              accessibilityRole="button"
-              accessibilityLabel="Close scanner"
-            >
-              <Ionicons name="close" size={20} color="#fff" />
-            </Pressable>
-            <View pointerEvents="none" style={styles.scanOverlay}>
-              <View style={[styles.scanCorner, styles.scanCornerTopLeft, { borderColor: colors.accent }]} />
-              <View style={[styles.scanCorner, styles.scanCornerTopRight, { borderColor: colors.accent }]} />
-              <View style={[styles.scanCorner, styles.scanCornerBottomLeft, { borderColor: colors.accent }]} />
-              <View style={[styles.scanCorner, styles.scanCornerBottomRight, { borderColor: colors.accent }]} />
-            </View>
-            <Pressable
-              onPress={() => void pickAndScanImage()}
-              style={styles.cameraUploadButton}
-              accessibilityRole="button"
-              accessibilityLabel="Upload QR from gallery"
-            >
-              <Ionicons name="images-outline" size={18} color="#fff" />
-              <Text style={styles.cameraUploadText}>Upload QR</Text>
-            </Pressable>
-          </View>
-        ) : !hideScanner ? (
-          <View style={[styles.scanLanding, { backgroundColor: colors.surfaceAlt }]}>
-            <View style={[styles.scanIllustration, { backgroundColor: colors.accentSoft }]}>
-              <Ionicons name="qr-code-outline" size={34} color={colors.accent} />
-            </View>
-            <View style={styles.scanActionsRow}>
-              <Pressable
-                onPress={() => void startScan()}
-                style={({ pressed }) => [styles.startScan, { backgroundColor: colors.accent }, pressed && styles.pressed]}
-              >
-                <Ionicons name="scan-outline" size={20} color="#fff" />
-                <Text style={styles.startScanText}>Scan Part</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => void pickAndScanImage()}
-                style={({ pressed }) => [
-                  styles.uploadScan,
-                  { borderColor: colors.accent, backgroundColor: colors.surfaceSolid },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Ionicons name="images-outline" size={20} color={colors.accent} />
-                <Text style={[styles.uploadScanText, { color: colors.accent }]}>Upload QR</Text>
-              </Pressable>
-            </View>
-            <View style={styles.scanInstructions}>
-              {[
-                { icon: 'scan-outline' as const, text: 'Tap Scan Part or Upload QR to load the part QR code.' },
-                { icon: 'clipboard-outline' as const, text: 'Check the part details, then fill in the rejection form.' },
-                { icon: 'cloud-upload-outline' as const, text: 'Save Production, then complete and save QC.' },
-              ].map((instruction, index) => (
-                <View key={instruction.text} style={styles.scanInstruction}>
-                  <View style={[styles.instructionIcon, { backgroundColor: colors.surfaceSolid }]}>
-                    <Ionicons name={instruction.icon} size={16} color={colors.accent} />
-                  </View>
-                  <Text style={[styles.instructionText, { color: colors.muted }]}>
-                    <Text style={[styles.instructionNumber, { color: colors.text }]}>{index + 1}. </Text>
-                    {instruction.text}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {scanError ? <Text style={[styles.errorText, { color: colors.danger }]}>{scanError}</Text> : null}
-        {detailsError ? <Text style={[styles.errorText, { color: colors.danger }]}>{detailsError}</Text> : null}
-        {part ? (
-          <Pressable
-            onPress={() => setShowDetails((current) => !current)}
-            style={[styles.detailsToggle, { borderTopColor: colors.border }]}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: showDetails }}
-          >
-            <Text style={[styles.detailsToggleLabel, { color: colors.accent }]}>{showDetails ? 'Hide more details' : 'Show more details'}</Text>
-            <Ionicons name={showDetails ? 'chevron-up' : 'chevron-down'} size={17} color={colors.accent} />
-          </Pressable>
-        ) : null}
-        {part && showDetails ? (
-          <View style={styles.detailsGrid}>
-            {detailsRows.length ? detailsRows.map((row) => (
-              <View key={row.key} style={[styles.detailItem, { backgroundColor: colors.surfaceAlt }]}>
-                <Text style={[styles.detailLabel, { color: colors.muted }]}>{row.label}</Text>
-                <Text style={[styles.detailValue, { color: colors.text }]}>{row.value}</Text>
-              </View>
-            )) : (
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>{part ? 'Part Scanned' : 'Scan Part'}</Text>
               <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>
-                {lookupLoading ? 'Loading…' : detailsError || 'No additional details were returned for this part.'}
+                {part ? 'Review the scanned part and complete the rejection details.' : 'Start by scanning the QR code on the part.'}
               </Text>
-            )}
+            </View>
+            {part ? (
+              onClose ? (
+                <Pressable
+                  onPress={onClose}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close form"
+                  style={styles.headingIconButton}
+                >
+                  <Ionicons name="close-circle-outline" size={22} color={colors.accent} />
+                </Pressable>
+              ) : !hideScanner ? (
+                <Pressable
+                  onPress={resetScan}
+                  accessibilityRole="button"
+                  accessibilityLabel="Return to scan part"
+                  style={styles.headingIconButton}
+                >
+                  <Ionicons name="close-circle-outline" size={22} color={colors.accent} />
+                </Pressable>
+              ) : null
+            ) : null}
           </View>
-        ) : null}
-      </View>
+
+          {part ? (
+            <View style={[styles.scannedPart, { backgroundColor: colors.accentSoft }]}>
+              <View style={[styles.scannedIcon, { backgroundColor: colors.surfaceSolid }]}>
+                <Ionicons name="cube-outline" size={21} color={colors.accent} />
+              </View>
+              <View style={styles.headingCopy}>
+                <Text style={[styles.scannedLabel, { color: colors.muted }]}>PART NUMBER</Text>
+                <Text style={[styles.scannedNumber, { color: colors.text }]}>{part.partNo}</Text>
+                <Text style={[styles.scannedMeta, { color: colors.muted }]}>Serial No · {part.serialNo}</Text>
+              </View>
+              {lookupLoading ? <ActivityIndicator color={colors.accent} /> : null}
+            </View>
+          ) : !hideScanner ? (
+            <View style={[styles.scanLanding, { backgroundColor: colors.surfaceAlt }]}>
+              <View style={[styles.scanIllustration, { backgroundColor: colors.accentSoft }]}>
+                <Ionicons name="qr-code-outline" size={34} color={colors.accent} />
+              </View>
+              <View style={styles.scanActionsRow}>
+                <Pressable
+                  onPress={() => void startScan()}
+                  style={({ pressed }) => [styles.startScan, { backgroundColor: colors.accent }, pressed && styles.pressed]}
+                >
+                  <Ionicons name="scan-outline" size={20} color="#fff" />
+                  <Text style={styles.startScanText}>Scan Part</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void pickAndScanImage()}
+                  style={({ pressed }) => [
+                    styles.uploadScan,
+                    { borderColor: colors.accent, backgroundColor: colors.surfaceSolid },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Ionicons name="images-outline" size={20} color={colors.accent} />
+                  <Text style={[styles.uploadScanText, { color: colors.accent }]}>Upload QR</Text>
+                </Pressable>
+              </View>
+              <View style={styles.scanInstructions}>
+                {[
+                  { icon: 'scan-outline' as const, text: 'Tap Scan Part or Upload QR to load the part QR code.' },
+                  { icon: 'clipboard-outline' as const, text: 'Check the part details, then fill in the rejection form.' },
+                  { icon: 'cloud-upload-outline' as const, text: 'Save Production, then complete and save QC.' },
+                ].map((instruction, index) => (
+                  <View key={instruction.text} style={styles.scanInstruction}>
+                    <View style={[styles.instructionIcon, { backgroundColor: colors.surfaceSolid }]}>
+                      <Ionicons name={instruction.icon} size={16} color={colors.accent} />
+                    </View>
+                    <Text style={[styles.instructionText, { color: colors.muted }]}>
+                      <Text style={[styles.instructionNumber, { color: colors.text }]}>{index + 1}. </Text>
+                      {instruction.text}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {scanError ? <Text style={[styles.errorText, { color: colors.danger }]}>{scanError}</Text> : null}
+          {detailsError ? <Text style={[styles.errorText, { color: colors.danger }]}>{detailsError}</Text> : null}
+          {part ? (
+            <Pressable
+              onPress={() => setShowDetails((current) => !current)}
+              style={[styles.detailsToggle, { borderTopColor: colors.border }]}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showDetails }}
+            >
+              <Text style={[styles.detailsToggleLabel, { color: colors.accent }]}>{showDetails ? 'Hide more details' : 'Show more details'}</Text>
+              <Ionicons name={showDetails ? 'chevron-up' : 'chevron-down'} size={17} color={colors.accent} />
+            </Pressable>
+          ) : null}
+          {part && showDetails ? (
+            <View style={styles.detailsGrid}>
+              {detailsRows.length ? detailsRows.map((row) => (
+                <View key={row.key} style={[styles.detailItem, { backgroundColor: colors.surfaceAlt }]}>
+                  <Text style={[styles.detailLabel, { color: colors.muted }]}>{row.label}</Text>
+                  <Text style={[styles.detailValue, { color: colors.text }]}>{row.value}</Text>
+                </View>
+              )) : (
+                <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>
+                  {lookupLoading ? 'Loading…' : detailsError || 'No additional details were returned for this part.'}
+                </Text>
+              )}
+            </View>
+          ) : null}
+        </View>
 
       {part ? (
         <View
@@ -1179,13 +1406,13 @@ export function RejectionEntryView({
             </Pressable>
             <Pressable
               onPress={() => void saveSection(activeSection)}
-              disabled={submitting || formLocked || lookupLoading || !part.productId}
+              disabled={!canSubmit}
               style={({ pressed }) => [
                 styles.submitButton,
                 actionsInRow ? styles.actionButtonHalf : styles.actionButtonFull,
-                { backgroundColor: formLocked ? colors.muted : colors.accent },
-                pressed && styles.pressed,
-                (submitting || formLocked || lookupLoading || !part.productId) && styles.disabled,
+                { backgroundColor: !canSubmit ? colors.muted : colors.accent },
+                pressed && canSubmit && styles.pressed,
+                !canSubmit && styles.disabled,
               ]}
             >
               {submitting ? <ActivityIndicator color="#fff" size="small" /> : (
@@ -1193,11 +1420,17 @@ export function RejectionEntryView({
                   {formLocked
                     ? 'View Only'
                     : sectionComplete
-                    ? `${activeSection === 'production' ? 'Production' : 'QC'} Saved`
+                    ? (isAdmin ? `Update ${activeSection === 'production' ? 'Production' : 'QC'}` : `${activeSection === 'production' ? 'Production' : 'QC'} Saved`)
                     : `Save ${activeSection === 'production' ? 'Production' : 'QC'}`}
                 </Text>
               )}
-              {!submitting && !formLocked ? <Ionicons name={sectionComplete ? 'checkmark-circle-outline' : 'arrow-forward'} size={17} color="#fff" /> : null}
+              {!submitting && !formLocked ? (
+                <Ionicons
+                  name={sectionComplete && !isAdmin ? 'checkmark-circle-outline' : 'arrow-forward'}
+                  size={17}
+                  color="#fff"
+                />
+              ) : null}
             </Pressable>
           </View>
         </View>
@@ -1326,8 +1559,39 @@ const styles = StyleSheet.create({
   headingCopy: { flex: 1, gap: 4 },
   sectionTitle: { fontSize: 15, fontWeight: '700' },
   sectionSubtitle: { fontSize: 11, lineHeight: 16 },
-  cameraFrame: { height: 280, overflow: 'hidden', borderWidth: 1, borderRadius: 18, backgroundColor: '#10191e' },
-  cameraCloseButton: { position: 'absolute', top: 12, right: 12, width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', zIndex: 10 },
+  inScreenCameraWrapper: { flex: 1, width: '100%', backgroundColor: '#000', position: 'relative' },
+  inScreenCameraHeader: { position: 'absolute', top: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 12, paddingBottom: 10, backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 20 },
+  inScreenHeaderBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
+  inScreenHeaderBtnActive: { backgroundColor: 'rgba(245,158,11,0.3)', borderWidth: 1, borderColor: '#f59e0b' },
+  inScreenHeaderCenter: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
+  inScreenHeaderTitle: { color: '#ffffff', fontSize: 14, fontWeight: '700' },
+  inScreenHeaderSubtitle: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 2, textAlign: 'center' },
+  inScreenReticleWrapper: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  inScreenReticle: { width: 220, height: 220, position: 'relative' },
+  inScreenCorner: { position: 'absolute', width: 34, height: 34, borderColor: '#22c55e', borderWidth: 4 },
+  cornerTL: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 14 },
+  cornerTR: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 14 },
+  cornerBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 14 },
+  cornerBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 14 },
+  cameraBottomOverlay: { position: 'absolute', bottom: 0, left: 0, right: 0, alignItems: 'center', paddingHorizontal: 16, paddingBottom: 16, zIndex: 20, gap: 16 },
+  cameraErrorBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(239,68,68,0.22)', borderWidth: 1, borderColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, maxWidth: '92%' },
+  cameraErrorText: { color: '#fca5a5', fontSize: 11, fontWeight: '700', textAlign: 'center' },
+  horizontalZoomBar: { width: '100%', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)', gap: 8 },
+  zoomPresetRowHorizontal: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  zoomPresetBadgeHorizontal: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.14)', minWidth: 32, alignItems: 'center' },
+  zoomPresetBadgeActiveHorizontal: { backgroundColor: '#22c55e' },
+  zoomPresetTextHorizontal: { color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '700' },
+  zoomPresetTextActiveHorizontal: { color: '#000000' },
+  zoomValueBadgeHorizontal: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: 'rgba(34,197,94,0.22)', marginLeft: 6 },
+  zoomValueTextHorizontal: { color: '#22c55e', fontSize: 11, fontWeight: '800' },
+  horizontalSliderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%' },
+  zoomStepBtnHorizontal: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' },
+  horizontalSliderTouchArea: { width: 180, height: 32, alignItems: 'center', justifyContent: 'center' },
+  horizontalSliderTrack: { width: 180, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.22)', position: 'relative', justifyContent: 'center' },
+  horizontalSliderFill: { height: '100%', backgroundColor: '#22c55e', borderRadius: 4 },
+  horizontalSliderThumb: { position: 'absolute', top: -5, width: 18, height: 18, borderRadius: 9, backgroundColor: '#ffffff', borderWidth: 2, borderColor: '#22c55e', elevation: 3 },
+  inScreenGalleryBtn: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 22, paddingVertical: 11, borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' },
+  inScreenGalleryText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
   scanLanding: { padding: 16, borderRadius: 18 },
   scanIllustration: { width: 76, height: 76, alignItems: 'center', justifyContent: 'center', borderRadius: 24, alignSelf: 'center', marginBottom: 16 },
   scanInstructions: { gap: 13, marginTop: 19 },
@@ -1335,19 +1599,11 @@ const styles = StyleSheet.create({
   instructionIcon: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center', borderRadius: 11 },
   instructionText: { flex: 1, fontSize: 11, lineHeight: 16 },
   instructionNumber: { fontWeight: '700' },
-  scanOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, alignItems: 'center', justifyContent: 'center' },
-  scanCorner: { position: 'absolute', width: 42, height: 42, borderWidth: 4 },
-  scanCornerTopLeft: { top: '25%', left: '18%', borderRightWidth: 0, borderBottomWidth: 0, borderTopLeftRadius: 12 },
-  scanCornerTopRight: { top: '25%', right: '18%', borderLeftWidth: 0, borderBottomWidth: 0, borderTopRightRadius: 12 },
-  scanCornerBottomLeft: { bottom: '25%', left: '18%', borderRightWidth: 0, borderTopWidth: 0, borderBottomLeftRadius: 12 },
-  scanCornerBottomRight: { bottom: '25%', right: '18%', borderLeftWidth: 0, borderTopWidth: 0, borderBottomRightRadius: 12 },
   scanActionsRow: { flexDirection: 'row', gap: 10, width: '100%' },
   startScan: { flex: 1, minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 14 },
   startScanText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   uploadScan: { flex: 1, minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderWidth: 1.5, borderRadius: 14 },
   uploadScanText: { fontSize: 13, fontWeight: '700' },
-  cameraUploadButton: { position: 'absolute', bottom: 16, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 16, paddingVertical: 9, borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', zIndex: 10 },
-  cameraUploadText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   permissionMessage: { minHeight: 90, alignItems: 'center', justifyContent: 'center', gap: 10 },
   scannedPart: { flexDirection: 'row', alignItems: 'center', gap: 13, padding: 14, borderRadius: 17 },
   scannedIcon: { width: 43, height: 43, alignItems: 'center', justifyContent: 'center', borderRadius: 14 },

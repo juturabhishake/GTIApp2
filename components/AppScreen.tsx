@@ -1,5 +1,5 @@
-import React from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
@@ -11,6 +11,10 @@ type AppScreenProps = React.PropsWithChildren<{
   stickyHeader?: React.ReactNode;
   scrollRef?: React.RefObject<React.ElementRef<typeof ScrollView> | null>;
   keyboardAvoiding?: boolean;
+  scrollEnabled?: boolean;
+  refreshing?: boolean;
+  onRefresh?: () => void | Promise<void>;
+  refreshable?: boolean;
 }>;
 
 export function AppScreen({
@@ -21,10 +25,41 @@ export function AppScreen({
   stickyHeader,
   scrollRef,
   keyboardAvoiding = true,
+  scrollEnabled = true,
+  refreshing,
+  onRefresh,
+  refreshable = true,
   children,
 }: AppScreenProps) {
   const { colors, uiMode } = useAppTheme();
   const insets = useSafeAreaInsets();
+  const [internalRefreshing, setInternalRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(async () => {
+    if (onRefresh) {
+      setInternalRefreshing(true);
+      try {
+        await onRefresh();
+      } finally {
+        setInternalRefreshing(false);
+      }
+    } else {
+      setInternalRefreshing(true);
+      setTimeout(() => {
+        setInternalRefreshing(false);
+      }, 800);
+    }
+  }, [onRefresh]);
+
+  const isRefreshing = refreshing !== undefined ? refreshing : internalRefreshing;
+  const refreshControlElement = scrollEnabled && refreshable !== false ? (
+    <RefreshControl
+      refreshing={isRefreshing}
+      onRefresh={handleRefresh}
+      colors={[colors.accent]}
+      tintColor={colors.accent}
+    />
+  ) : undefined;
 
   if (uiMode === 'modern') {
     const hasHeader = showHeading || !!stickyHeader;
@@ -45,6 +80,8 @@ export function AppScreen({
         ) : null}
         <ScrollView
           ref={scrollRef}
+          scrollEnabled={scrollEnabled}
+          refreshControl={refreshControlElement}
           style={{ flex: 1, backgroundColor: colors.background }}
           contentContainerStyle={[
             styles.content,
@@ -79,6 +116,8 @@ export function AppScreen({
   const legacyBody = (
     <ScrollView
       ref={scrollRef}
+      scrollEnabled={scrollEnabled}
+      refreshControl={refreshControlElement}
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={[
         styles.content,

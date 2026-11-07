@@ -18,6 +18,7 @@ import { useFocusEffect } from 'expo-router';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { ExportExcelButton } from '@/components/ExportExcelButton';
 import { RejectionEntryView, type ScannedPart } from '@/components/RejectionEntryView';
+import { verifyLocationForScreen } from '@/utils/locationVerifier';
 import { useAppTheme } from '@/contexts/ThemeContext';
 
 type DateField = 'start' | 'end';
@@ -231,6 +232,24 @@ export default function HistoryScreen() {
     };
   }, [startDate, endDate, refresh]));
 
+  const handleRefresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [data] = await Promise.all([
+        getRejectionHistory(startDate, endDate),
+        verifyLocationForScreen('/History').catch(() => null),
+      ]);
+      setRecords(data);
+      setError('');
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : 'Unable to load rejection history.';
+      setError(message);
+      setRecords([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [startDate, endDate]);
+
   const chooseDate = (date: Date) => {
     if (activeDate === 'start') {
       setStartDate(date);
@@ -282,6 +301,8 @@ export default function HistoryScreen() {
     <AppScreen
       title="Transaction History"
       subtitle="Review rejection entries submitted during the selected dates."
+      onRefresh={handleRefresh}
+      refreshing={loading}
       stickyHeader={
         <>
           <View style={styles.filters}>

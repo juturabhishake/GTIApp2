@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { AppScreen, GlassPanel } from '@/components/AppScreen';
 import { useAppTheme } from '@/contexts/ThemeContext';
+import { verifyLocationForScreen } from '@/utils/locationVerifier';
 
 export default function ProfileScreen() {
   const [profile, setProfile] = useState({
@@ -33,43 +34,39 @@ export default function ProfileScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const { colors } = useAppTheme();
 
-  useEffect(() => {
-    let active = true;
-    const fetchData = async () => {
-      try {
-        const [name, empid, dept1, dept2, pos1, pos2, logintype1, logintype2, location] = await Promise.all([
-          SecureStore.getItemAsync('full_name'),
-          SecureStore.getItemAsync('employee_id'),
-          SecureStore.getItemAsync('department'),
-          SecureStore.getItemAsync('tped'),
-          SecureStore.getItemAsync('position'),
-          SecureStore.getItemAsync('sop'),
-          SecureStore.getItemAsync('logintype'),
-          SecureStore.getItemAsync('tl'),
-          SecureStore.getItemAsync('currentgeocord'),
-        ]);
+  const fetchData = useCallback(async () => {
+    try {
+      await verifyLocationForScreen('/profile').catch(() => null);
+      const [name, empid, dept1, dept2, pos1, pos2, logintype1, logintype2, location] = await Promise.all([
+        SecureStore.getItemAsync('full_name'),
+        SecureStore.getItemAsync('employee_id'),
+        SecureStore.getItemAsync('department'),
+        SecureStore.getItemAsync('tped'),
+        SecureStore.getItemAsync('position'),
+        SecureStore.getItemAsync('sop'),
+        SecureStore.getItemAsync('logintype'),
+        SecureStore.getItemAsync('tl'),
+        SecureStore.getItemAsync('currentgeocord'),
+      ]);
 
-        if (active) {
-          setProfile({
-            name: name || '',
-            empid: empid || '',
-            department: dept1 || dept2 || '',
-            position: pos1 || pos2 || '',
-            accessType: logintype1 || logintype2 || '',
-            location: location || '',
-          });
-        }
-      } catch (err) {
-        console.error('Failed to load profile data:', err);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-    fetchData();
-    return () => {
-      active = false;
-    };
+      setProfile({
+        name: name || '',
+        empid: empid || '',
+        department: dept1 || dept2 || '',
+        position: pos1 || pos2 || '',
+        accessType: logintype1 || logintype2 || '',
+        location: location || '',
+      });
+    } catch (err) {
+      console.error('Failed to load profile data:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleChangePassword = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -118,7 +115,12 @@ export default function ProfileScreen() {
   }
 
   return (
-    <AppScreen title="My profile" subtitle="Your account details and security settings.">
+    <AppScreen
+      title="My profile"
+      subtitle="Your account details and security settings."
+      onRefresh={fetchData}
+      refreshing={loading}
+    >
       <GlassPanel style={styles.profileCard}>
         <View style={[styles.avatar, { backgroundColor: colors.accentSoft }]}>
           <Ionicons name="person" size={32} color={colors.accent} />

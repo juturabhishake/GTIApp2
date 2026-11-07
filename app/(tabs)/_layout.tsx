@@ -18,8 +18,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
-import * as Location from 'expo-location';
 import { BlurView } from 'expo-blur';
+import { verifyLocationForScreen } from '@/utils/locationVerifier';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme, type ThemePreference } from '@/contexts/ThemeContext';
 
@@ -243,121 +243,10 @@ export default function TabLayout() {
   const verifyLocationAndCredentials = useCallback(async (targetPath: string) => {
     if (targetPath === '/') return;
     const currentCheckId = ++checkIdRef.current;
-
-    try {
-      const [savedEmpId, savedPassword] = await Promise.all([
-        SecureStore.getItemAsync('employee_id'),
-        SecureStore.getItemAsync('password'),
-      ]);
-
-      if (!savedEmpId || !savedPassword) {
-        console.log('Background verification failed: Missing saved credentials');
-        if (currentCheckId === checkIdRef.current) {
-          await clearSessionAndKickToLogin();
-        }
-        return;
-      }
-
-      const { status } = await Location.getForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        const req = await Location.requestForegroundPermissionsAsync();
-        if (req.status !== 'granted') {
-          console.log('Background verification failed: Location permission denied');
-          if (currentCheckId === checkIdRef.current) {
-            await clearSessionAndKickToLogin('Location Permission Required');
-          }
-          return;
-        }
-      }
-
-      const servicesEnabled = await Location.hasServicesEnabledAsync();
-      if (!servicesEnabled) {
-        console.log('Background verification failed: GPS / Location services disabled');
-        if (currentCheckId === checkIdRef.current) {
-          await clearSessionAndKickToLogin('GPS / Location Disabled');
-        }
-        return;
-      }
-
-      let location = await Promise.race([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
-      ]);
-      if (!location) {
-        location = await Location.getLastKnownPositionAsync({});
-      }
-      if (!location) {
-        location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Lowest });
-      }
-
-      if (currentCheckId !== checkIdRef.current) return;
-
-      if (!location) {
-        console.log('Background verification error: Unable to determine location fix');
-        return;
-      }
-
-      const latitude = location.coords.latitude;
-      const longitude = location.coords.longitude;
-      console.log(`Checking location for screen "${targetPath}": Coordinates (${latitude}, ${longitude})`);
-
-      await SecureStore.setItemAsync('current_latitude', String(latitude));
-      await SecureStore.setItemAsync('current_longitude', String(longitude));
-
-      const response = await fetch('https://gtiappsbackend.vercel.app/api/geologin', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          employeeId: savedEmpId,
-          password: savedPassword,
-          latitude,
-          longitude,
-        }),
-      });
-
-      if (currentCheckId !== checkIdRef.current) return;
-
-      const data = await response.json();
-
-      if (response.status === 403 || data.message === 'Location Restricted') {
-        console.log('Location check status: ERROR - Location Restricted', {
-          latitude,
-          longitude,
-          allowedLocations: data.allowedLocations,
-        });
-        const rawLocations = typeof data.allowedLocations === 'string' ? data.allowedLocations : '';
-        await clearSessionAndKickToLogin('Location Restricted', rawLocations);
-        return;
-      }
-
-      if (response.status === 401 || data.message === 'Invalid Credentials') {
-        console.log('Location check status: ERROR - Invalid Credentials', { employeeId: savedEmpId });
-        await clearSessionAndKickToLogin('Invalid Credentials');
-        return;
-      }
-
-      if (response.ok && data.message === 'Login Success') {
-        console.log('Location check status: SUCCESS', {
-          latitude,
-          longitude,
-          address: data.data?.currentgeocord || data.data?.GeoAddress,
-        });
-        const toStr = (val: unknown) => (val === null || val === undefined ? '' : String(val));
-        const geoAddr = toStr(data.data?.currentgeocord || data.data?.GeoAddress || data.data?.Address || data.data?.MatchedAddress);
-        if (geoAddr) {
-          await SecureStore.setItemAsync('currentgeocord', geoAddr);
-        }
-        verifiedPathRef.current = targetPath;
-        return;
-      }
-
-      console.log('Location check status: ERROR -', data.message || 'Verification Failed');
-      await clearSessionAndKickToLogin(data.message || 'Verification Failed');
-    } catch (err) {
-      if (currentCheckId !== checkIdRef.current) return;
-      console.log('Background verification network/system error:', err);
+    const verified = await verifyLocationForScreen(targetPath, clearSessionAndKickToLogin);
+    if (currentCheckId !== checkIdRef.current) return;
+    if (verified) {
+      verifiedPathRef.current = targetPath;
     }
   }, [clearSessionAndKickToLogin]);
 
