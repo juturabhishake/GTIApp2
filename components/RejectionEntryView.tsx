@@ -30,6 +30,7 @@ const BACKEND_BASE_URL = 'https://gtiappsbackend.vercel.app';
 const PART_DETAILS_API_URL = `${BACKEND_BASE_URL}/api/product-matrix/part-details`;
 const REJECTION_SUBMIT_API_URL = `${BACKEND_BASE_URL}/api/rejection/save`;
 const REJECTION_GET_API_URL = `${BACKEND_BASE_URL}/api/rejection/get`;
+const PROJECT_TRANSIDS_API_URL = `${BACKEND_BASE_URL}/api/rejection/project-transids`;
 
 function getOptionsApiUrl(type: string) {
   return type === 'dimensions' ? DIMENSIONS_OPTIONS_API_URL : OPTIONS_API_URL;
@@ -41,6 +42,7 @@ export type FormKey =
   | 'partName' | 'bhChThIm' | 'op' | 'fixPos' | 'defectType' | 'dimension'
   | 'actual' | 'qty' | 'operator' | 'leader' | 'decision' | 'scrapType' | 'reason' | 'returnReason'
   | 'targetDate' | 'status' | 'correctiveAction';
+export type ActiveSelectKey = FormKey | 'templateTransId';
 export type EntrySection = 'production' | 'qc';
 export type FieldDefinition = {
   key: FormKey;
@@ -321,6 +323,39 @@ function rejectionValueToForm(value: unknown): string {
   return String(value);
 }
 
+function normalizeTemplateSearchText(text: string): string {
+  return text.trim().toLowerCase().replace(/\s*([|_])\s*/g, '$1').replace(/\s+/g, ' ');
+}
+
+function parseTransIdParts(transId: string): { partNo: string; serialNo: string } {
+  const clean = transId.trim();
+  const separator = clean.includes('|') ? '|' : clean.includes('_') ? '_' : '';
+  const separatorIndex = separator ? clean.lastIndexOf(separator) : -1;
+  if (separatorIndex > 0) {
+    return {
+      partNo: clean.slice(0, separatorIndex).trim(),
+      serialNo: clean.slice(separatorIndex + 1).trim(),
+    };
+  }
+  return { partNo: clean, serialNo: '' };
+}
+
+function getTemplateOptionRank(option: SelectOption, queryNorm: string, queryTokens: string[]): number {
+  const labelNorm = option.label.trim().toLowerCase();
+  const { partNo: partNoNorm, serialNo: serialNoNorm } = parseTransIdParts(labelNorm);
+  const labelWithUnderscore = labelNorm.replace(/\|/g, '_');
+
+  if (labelNorm === queryNorm || labelWithUnderscore === queryNorm) return 0;
+  if (serialNoNorm && serialNoNorm === queryNorm) return 1;
+  if (partNoNorm && partNoNorm === queryNorm) return 2;
+  if (serialNoNorm && serialNoNorm.startsWith(queryNorm)) return 3;
+  if (partNoNorm && partNoNorm.startsWith(queryNorm)) return 4;
+  if (labelNorm.startsWith(queryNorm) || labelWithUnderscore.startsWith(queryNorm)) return 5;
+  if (labelNorm.includes(queryNorm) || labelWithUnderscore.includes(queryNorm)) return 6;
+  if (queryTokens.length > 1 && queryTokens.every((token) => labelNorm.includes(token))) return 7;
+  return -1;
+}
+
 export type RejectionEntryViewProps = {
   initialPart?: ScannedPart | null;
   onClose?: () => void;
@@ -350,13 +385,26 @@ export function RejectionEntryView({
   const sliderTouchStartZoom = useRef<number>(0);
   const HORIZONTAL_SLIDER_WIDTH = 180;
   const [lookupLoading, setLookupLoading] = useState(false);
+  const [savedEntryLoading, setSavedEntryLoading] = useState(false);
   const [optionLists, setOptionLists] = useState<Record<string, SelectOption[]>>({ entryStatuses });
   const [optionErrors, setOptionErrors] = useState<Record<string, string>>({});
   const [optionLoading, setOptionLoading] = useState<Record<string, boolean>>({});
+  const [projectName, setProjectName] = useState('');
+  const [templateOptions, setTemplateOptions] = useState<SelectOption[]>([]);
+  const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateError, setTemplateError] = useState('');
+  const [applyingTemplate, setApplyingTemplate] = useState(false);
+  const [selectedTemplateTransId, setSelectedTemplateTransId] = useState('');
+  const [initialSavedForm, setInitialSavedForm] = useState<Record<FormKey, string> | null>(null);
+  const [initialCompletedSections, setInitialCompletedSections] = useState<Record<EntrySection, boolean>>({
+    production: false,
+    qc: false,
+  });
+  const loadedTemplateProjectRef = useRef('');
   const [scanError, setScanError] = useState('');
   const [detailsError, setDetailsError] = useState('');
   const [submitMessage, setSubmitMessage] = useState('');
-  const [activeSelect, setActiveSelect] = useState<FormKey | null>(null);
+  const [activeSelect, setActiveSelect] = useState<ActiveSelectKey | null>(null);
   const [optionSearch, setOptionSearch] = useState('');
   const [activeDate, setActiveDate] = useState<FormKey | null>(null);
   const [activeSection, setActiveSection] = useState<EntrySection>('production');
@@ -580,16 +628,20 @@ export function RejectionEntryView({
       const record = extractPartDetails(payload);
       if (!record) {
         setDetails(null);
+        setProjectName('');
         setDetailsError(`No Product Matrix details were returned for part number ${scanned.partNo}.`);
         return;
       }
       const productId = findDetail(record, ['Product_Id', 'ProductId']);
       if (!/^\d+$/.test(productId)) {
         setDetails(null);
+        setProjectName('');
         setDetailsError(`No valid Product ID was returned for part number ${scanned.partNo}.`);
         return;
       }
+      const resolvedProject = findDetail(record, ['Project']);
       setDetails(record);
+      setProjectName(resolvedProject);
       setPart({ ...scanned, productId });
       setForm((current) => ({
         ...current,
@@ -626,9 +678,65 @@ export function RejectionEntryView({
     return payload.data as Record<string, unknown>;
   }, []);
 
+  const fetchProjectTransIds = useCallback(async (project: string) => {
+    const cleanProject = project.trim();
+    if (!cleanProject) {
+      setTemplateOptions([]);
+      return;
+    }
+    setTemplateLoading(true);
+    setTemplateError('');
+    try {
+      const response = await fetch(PROJECT_TRANSIDS_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ project: cleanProject }),
+      });
+      const payload: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = payload && typeof payload === 'object' && 'message' in payload
+          ? String(payload.message)
+          : `Template options request failed (HTTP ${response.status}).`;
+        throw new Error(message);
+      }
+      const rawList = Array.isArray(payload)
+        ? payload
+        : payload && typeof payload === 'object' && 'data' in payload && Array.isArray(payload.data)
+        ? payload.data
+        : null;
+      if (!rawList) {
+        throw new Error('Template options response was not a list.');
+      }
+      const parsed = rawList.filter((item): item is SelectOption =>
+        !!item && typeof item === 'object' && typeof item.label === 'string' && typeof item.value === 'string',
+      );
+      setTemplateOptions(parsed);
+      loadedTemplateProjectRef.current = cleanProject;
+    } catch (error) {
+      console.error('Unable to load project template transIds:', error);
+      setTemplateError(error instanceof Error ? error.message : 'Could not load project history.');
+    } finally {
+      setTemplateLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!projectName || savedEntryLoading || lookupLoading || !isCurrentSectionEditable) return;
+    if (loadedTemplateProjectRef.current === projectName) return;
+    void fetchProjectTransIds(projectName);
+  }, [projectName, savedEntryLoading, lookupLoading, isCurrentSectionEditable, fetchProjectTransIds]);
+
   const loadPart = useCallback(async (scanned: ScannedPart) => {
+    setSavedEntryLoading(true);
     setActiveSection(isQC ? 'qc' : 'production');
     setCompletedSections({ production: false, qc: false });
+    setInitialSavedForm(null);
+    setInitialCompletedSections({ production: false, qc: false });
+    setProjectName('');
+    setTemplateOptions([]);
+    setTemplateError('');
+    setSelectedTemplateTransId('');
+    loadedTemplateProjectRef.current = '';
     setSubmitMessage('');
     setForm({ ...initialForm, leakCode: `${scanned.partNo}|${scanned.serialNo}`, qty: '1' });
     setPart(scanned);
@@ -637,58 +745,75 @@ export function RejectionEntryView({
       employees: [],
       dimensions: [],
     }));
-    await loadPartDetails(scanned);
     try {
-      const saved = await fetchSavedRejection(scanned.transId);
-      setForm((current) => {
-        const next = { ...current };
+      await loadPartDetails(scanned);
+      try {
+        const saved = await fetchSavedRejection(scanned.transId);
+        const baseline: Record<FormKey, string> = {
+          ...initialForm,
+          rejectedOn: '',
+          leakCode: `${scanned.partNo}|${scanned.serialNo}`,
+          qty: '1',
+        };
         for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
           if (saved[column] === undefined || saved[column] === null) continue;
           const value = rejectionValueToForm(saved[column]);
-          if (value.trim()) next[key] = value;
+          if (value.trim()) baseline[key] = value;
         }
-        next.leakCode = `${scanned.partNo}|${scanned.serialNo}`;
-        next.qty = '1';
-        return next;
-      });
-      const productionDone = isSectionCompleteFromRecord(saved, productionCompleteColumns);
-      const qcDone = isSectionCompleteFromRecord(saved, qcCompleteColumns);
-      setCompletedSections({ production: productionDone, qc: qcDone });
-      if (isQC) {
-        setActiveSection('qc');
-      } else if (isProd) {
-        setActiveSection('production');
-      } else {
-        setActiveSection(productionDone && !qcDone ? 'qc' : 'production');
-      }
-      if (productionDone && qcDone) {
-        if (isAdmin) {
-          setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is complete — Admin edit access enabled.`);
+        setInitialSavedForm(baseline);
+        setForm((current) => {
+          const next = { ...current };
+          for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
+            if (saved[column] === undefined || saved[column] === null) continue;
+            const value = rejectionValueToForm(saved[column]);
+            if (value.trim()) next[key] = value;
+          }
+          next.leakCode = `${scanned.partNo}|${scanned.serialNo}`;
+          next.qty = '1';
+          return next;
+        });
+        const productionDone = isSectionCompleteFromRecord(saved, productionCompleteColumns);
+        const qcDone = isSectionCompleteFromRecord(saved, qcCompleteColumns);
+        setCompletedSections({ production: productionDone, qc: qcDone });
+        setInitialCompletedSections({ production: productionDone, qc: qcDone });
+        if (isQC) {
+          setActiveSection('qc');
+        } else if (isProd) {
+          setActiveSection('production');
         } else {
-          setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is fully complete — all inputs are locked.`);
+          setActiveSection(productionDone && !qcDone ? 'qc' : 'production');
         }
-      } else if (productionDone) {
-        if (isProd) {
-          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}) — Production is locked and view-only.`);
-        } else if (isQC) {
-          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Complete and save the QC tab.`);
+        if (productionDone && qcDone) {
+          if (isAdmin) {
+            setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is complete — Admin edit access enabled.`);
+          } else {
+            setSubmitMessage(`Entry #${saved.RejectionEntryId ?? '?'} is fully complete — all inputs are locked.`);
+          }
+        } else if (productionDone) {
+          if (isProd) {
+            setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}) — Production is locked and view-only.`);
+          } else if (isQC) {
+            setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Complete and save the QC tab.`);
+          } else {
+            setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Now complete the QC tab.`);
+          }
         } else {
-          setSubmitMessage(`Production complete (Entry #${saved.RejectionEntryId ?? '?'}). Now complete the QC tab.`);
+          if (!isAdmin && !isProd && !isQC) {
+            setSubmitMessage(`Loaded RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}) — View only access.`);
+          } else if (isQC) {
+            setSubmitMessage(`Loaded RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Production is pending.`);
+          } else {
+            setSubmitMessage(`Loaded existing RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Review and save if needed.`);
+          }
         }
-      } else {
+      } catch (reloadError) {
+        console.log('[RejectionEntry] no existing RejectionEntry:', scanned.transId);
         if (!isAdmin && !isProd && !isQC) {
-          setSubmitMessage(`Loaded RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}) — View only access.`);
-        } else if (isQC) {
-          setSubmitMessage(`Loaded RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Production is pending.`);
-        } else {
-          setSubmitMessage(`Loaded existing RejectionEntry #${saved.RejectionEntryId ?? '?'} (${scanned.partNo} | ${scanned.serialNo}). Review and save if needed.`);
+          setSubmitMessage('View-only access for current user role.');
         }
       }
-    } catch (reloadError) {
-      console.log('[RejectionEntry] no existing RejectionEntry:', scanned.transId);
-      if (!isAdmin && !isProd && !isQC) {
-        setSubmitMessage('View-only access for current user role.');
-      }
+    } finally {
+      setSavedEntryLoading(false);
     }
   }, [loadPartDetails, fetchSavedRejection, isAdmin, isProd, isQC]);
 
@@ -767,15 +892,62 @@ export function RejectionEntryView({
           next[field.key] = `${part.partNo}|${part.serialNo}`;
         } else if (field.key === 'qty') {
           next[field.key] = '1';
+        } else if (initialSavedForm) {
+          next[field.key] = initialSavedForm[field.key] ?? '';
         } else {
           next[field.key] = '';
         }
       });
       return next;
     });
-    setCompletedSections((current) => ({ ...current, [activeSection]: false }));
-    setSubmitMessage('');
+    setCompletedSections((current) => ({
+      ...current,
+      [activeSection]: initialSavedForm ? initialCompletedSections[activeSection] : false,
+    }));
+    setSelectedTemplateTransId('');
+    setSubmitMessage(
+      initialSavedForm
+        ? 'Reset to the original rejection values.'
+        : '',
+    );
   };
+
+  const applyTemplateTransId = useCallback(async (selectedTransId: string) => {
+    if (!part || !selectedTransId || formLocked) return;
+    setApplyingTemplate(true);
+    setTemplateError('');
+    try {
+      const record = await fetchSavedRejection(selectedTransId);
+      const allowedKeys = new Set<FormKey>();
+      if (canEditSection('production')) {
+        productionFields.forEach((field) => {
+          if (field.key !== 'leakCode' && field.key !== 'qty') allowedKeys.add(field.key);
+        });
+      }
+      if (canEditSection('qc')) {
+        qcFields.forEach((field) => {
+          if (field.key !== 'leakCode' && field.key !== 'qty') allowedKeys.add(field.key);
+        });
+      }
+      setForm((current) => {
+        const next = { ...current };
+        for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
+          if (!allowedKeys.has(key)) continue;
+          next[key] = rejectionValueToForm(record[column]);
+        }
+        next.leakCode = `${part.partNo}|${part.serialNo}`;
+        next.qty = '1';
+        return next;
+      });
+      setSelectedTemplateTransId(selectedTransId);
+      setSubmitMessage(`Loaded template data from ${selectedTransId} successfully. Review before saving.`);
+    } catch (error) {
+      console.error('Unable to load template rejection entry:', error);
+      setTemplateError(error instanceof Error ? error.message : 'Could not load template entry data.');
+    } finally {
+      setApplyingTemplate(false);
+    }
+  }, [part, formLocked, fetchSavedRejection, canEditSection]);
 
   const startScan = async () => {
     setScanError('');
@@ -836,6 +1008,15 @@ export function RejectionEntryView({
     scanLock.current = false;
     setPart(null);
     setDetails(null);
+    setProjectName('');
+    setTemplateOptions([]);
+    setTemplateError('');
+    setTemplateLoading(false);
+    setApplyingTemplate(false);
+    setSelectedTemplateTransId('');
+    setInitialSavedForm(null);
+    setInitialCompletedSections({ production: false, qc: false });
+    loadedTemplateProjectRef.current = '';
     setDetailsError('');
     setScanError('');
     setShowDetails(false);
@@ -914,6 +1095,20 @@ export function RejectionEntryView({
         try {
           const record = await fetchSavedRejection(savedTransId);
           const savedEntryId = record.RejectionEntryId;
+          const updatedBaseline: Record<FormKey, string> = {
+            ...initialForm,
+            rejectedOn: '',
+            leakCode: `${part.partNo}|${part.serialNo}`,
+            qty: '1',
+          };
+          for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
+            if (record[column] === undefined || record[column] === null) continue;
+            const value = rejectionValueToForm(record[column]);
+            if (value.trim()) updatedBaseline[key] = value;
+          }
+          setInitialSavedForm(updatedBaseline);
+          setInitialCompletedSections((current) => ({ ...current, production: true }));
+          setSelectedTemplateTransId('');
           setForm((current) => {
             const next = { ...current };
             for (const [column, key] of Object.entries(rejectionColumnToFormKey)) {
@@ -937,6 +1132,25 @@ export function RejectionEntryView({
         onSaved?.();
         return;
       }
+
+      setInitialSavedForm((current) => {
+        const next: Record<FormKey, string> = {
+          ...(current || {
+            ...initialForm,
+            rejectedOn: '',
+            leakCode: `${part.partNo}|${part.serialNo}`,
+            qty: '1',
+          }),
+        };
+        qcFields.forEach((field) => {
+          next[field.key] = formPayload[field.key] ?? '';
+        });
+        next.leakCode = `${part.partNo}|${part.serialNo}`;
+        next.qty = '1';
+        return next;
+      });
+      setInitialCompletedSections((current) => ({ ...current, qc: true }));
+      setSelectedTemplateTransId('');
 
       if (isQC) {
         setSubmitMessage('QC saved successfully. QC is locked and view-only.');
@@ -1061,13 +1275,43 @@ export function RejectionEntryView({
     );
   };
 
-  const currentSelect = fields.find((field) => field.key === activeSelect);
-  const currentOptions = currentSelect?.optionType ? optionLists[currentSelect.optionType] || [] : [];
+  const availableTemplateOptions = useMemo(() => {
+    const currentTransId = part?.transId?.trim().toLowerCase() || '';
+    if (!currentTransId) return templateOptions;
+    return templateOptions.filter((option) => option.value.trim().toLowerCase() !== currentTransId);
+  }, [templateOptions, part?.transId]);
+
+  const selectedTemplateParts = useMemo(
+    () => (selectedTemplateTransId ? parseTransIdParts(selectedTemplateTransId) : null),
+    [selectedTemplateTransId],
+  );
+
+  const currentSelect = activeSelect && activeSelect !== 'templateTransId'
+    ? fields.find((field) => field.key === activeSelect)
+    : undefined;
+  const currentOptions = activeSelect === 'templateTransId'
+    ? availableTemplateOptions
+    : currentSelect?.optionType
+    ? optionLists[currentSelect.optionType] || []
+    : [];
   const filteredOptions = useMemo(() => {
     const query = optionSearch.trim().toLocaleLowerCase();
     if (!query) return currentOptions;
+    if (activeSelect === 'templateTransId') {
+      const queryNorm = normalizeTemplateSearchText(optionSearch);
+      const queryTokens = queryNorm.split(/[\s|_]+/).filter(Boolean);
+      return currentOptions
+        .map((option, index) => ({
+          option,
+          index,
+          rank: getTemplateOptionRank(option, queryNorm, queryTokens),
+        }))
+        .filter((entry) => entry.rank >= 0)
+        .sort((left, right) => left.rank - right.rank || left.index - right.index)
+        .map((entry) => entry.option);
+    }
     return currentOptions.filter((option) => option.label.toLocaleLowerCase().includes(query));
-  }, [currentOptions, optionSearch]);
+  }, [currentOptions, optionSearch, activeSelect]);
 
   if (isScanning) {
     return (
@@ -1324,18 +1568,83 @@ export function RejectionEntryView({
             </Pressable>
           ) : null}
           {part && showDetails ? (
-            <View style={styles.detailsGrid}>
-              {detailsRows.length ? detailsRows.map((row) => (
-                <View key={row.key} style={[styles.detailItem, { backgroundColor: colors.surfaceAlt }]}>
-                  <Text style={[styles.detailLabel, { color: colors.muted }]}>{row.label}</Text>
-                  <Text style={[styles.detailValue, { color: colors.text }]}>{row.value}</Text>
+            <>
+              <View style={styles.detailsGrid}>
+                {detailsRows.length ? detailsRows.map((row) => (
+                  <View key={row.key} style={[styles.detailItem, { backgroundColor: colors.surfaceAlt }]}>
+                    <Text style={[styles.detailLabel, { color: colors.muted }]}>{row.label}</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{row.value}</Text>
+                  </View>
+                )) : (
+                  <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>
+                    {lookupLoading ? 'Loading…' : detailsError || 'No additional details were returned for this part.'}
+                  </Text>
+                )}
+              </View>
+              {!formLocked ? (
+                <View style={[styles.templateSelectContainer, { borderTopColor: colors.border }]}>
+                  <Text style={[styles.fieldLabel, { color: colors.text }]}>Copy Data from Previous Trans ID</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={templateLoading || applyingTemplate || submitting || lookupLoading}
+                    onPress={() => {
+                      if (templateError && projectName) {
+                        void fetchProjectTransIds(projectName);
+                        return;
+                      }
+                      setActiveSelect('templateTransId');
+                    }}
+                    style={({ pressed }) => [
+                      styles.fieldControl,
+                      styles.selectControl,
+                      selectedTemplateParts && !templateLoading && !applyingTemplate && styles.templateSelectedControl,
+                      { borderColor: selectedTemplateParts ? colors.accent : colors.border, backgroundColor: colors.surfaceAlt },
+                      (templateLoading || applyingTemplate || submitting || lookupLoading) && styles.disabledField,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    {templateLoading || applyingTemplate || !selectedTemplateParts ? (
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.controlText,
+                          { color: colors.muted },
+                        ]}
+                      >
+                        {templateLoading
+                          ? 'Loading options...'
+                          : applyingTemplate
+                          ? 'Copying entry data...'
+                          : !templateError && projectName && loadedTemplateProjectRef.current === projectName && !availableTemplateOptions.length
+                          ? 'No partnos from this project in history'
+                          : 'Select Part No / Serial No'}
+                      </Text>
+                    ) : (
+                      <View style={styles.templateSelectedCopy}>
+                        <Text numberOfLines={1} style={[styles.templateSelectedTitle, { color: colors.text }]}>
+                          {selectedTemplateParts.partNo}
+                        </Text>
+                        {selectedTemplateParts.serialNo ? (
+                          <Text numberOfLines={1} style={[styles.templateSelectedSubtitle, { color: colors.muted }]}>
+                            Serial No: {selectedTemplateParts.serialNo}
+                          </Text>
+                        ) : null}
+                      </View>
+                    )}
+                    {templateLoading || applyingTemplate ? (
+                      <ActivityIndicator size="small" color={colors.accent} />
+                    ) : templateError ? (
+                      <Ionicons name="refresh-outline" size={17} color={colors.danger} />
+                    ) : (
+                      <Ionicons name="chevron-down" size={17} color={colors.muted} />
+                    )}
+                  </Pressable>
+                  {templateError ? (
+                    <Text style={[styles.fieldError, { color: colors.danger }]}>{templateError}</Text>
+                  ) : null}
                 </View>
-              )) : (
-                <Text style={[styles.sectionSubtitle, { color: colors.muted }]}>
-                  {lookupLoading ? 'Loading…' : detailsError || 'No additional details were returned for this part.'}
-                </Text>
-              )}
-            </View>
+              ) : null}
+            </>
           ) : null}
         </View>
 
@@ -1473,17 +1782,21 @@ export function RejectionEntryView({
             style={[styles.optionSheet, { backgroundColor: colors.surfaceSolid, borderColor: colors.border }]}
           >
             <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
-            <Text style={[styles.sheetTitle, { color: colors.text }]}>{currentSelect?.label || 'Select an option'}</Text>
+            <Text style={[styles.sheetTitle, { color: colors.text }]}>
+              {activeSelect === 'templateTransId'
+                ? 'Copy from Previous Trans ID'
+                : currentSelect?.label || 'Select an option'}
+            </Text>
             <View style={[styles.searchBox, { backgroundColor: colors.surfaceAlt, borderColor: colors.border }]}>
               <Ionicons name="search-outline" size={18} color={colors.muted} />
               <TextInput
                 value={optionSearch}
                 onChangeText={setOptionSearch}
-                placeholder="Search options"
+                placeholder={activeSelect === 'templateTransId' ? 'Search Part No, Serial No or Trans ID' : 'Search options'}
                 placeholderTextColor={colors.muted}
                 autoCapitalize="none"
                 autoCorrect={false}
-                accessibilityLabel={`Search ${currentSelect?.label || 'options'}`}
+                accessibilityLabel={activeSelect === 'templateTransId' ? 'Search Part No, Serial No or Trans ID' : `Search ${currentSelect?.label || 'options'}`}
                 style={[styles.searchInput, { color: colors.text }]}
               />
               {optionSearch ? (
@@ -1493,30 +1806,86 @@ export function RejectionEntryView({
               ) : null}
             </View>
             <ScrollView style={styles.optionList} keyboardShouldPersistTaps="handled">
-              {currentSelect?.optionType && optionLoading[currentSelect.optionType] ? (
+              {(activeSelect === 'templateTransId' && templateLoading) || (currentSelect?.optionType && optionLoading[currentSelect.optionType]) ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center', justifyContent: 'center' }}>
                   <ActivityIndicator size="small" color={colors.accent} />
                   <Text style={[styles.noOptions, { color: colors.muted, paddingTop: 8 }]}>Loading options...</Text>
                 </View>
               ) : (
                 <>
-                  {filteredOptions.map((option) => (
-                    <Pressable
-                      key={`${option.value}:${option.label}`}
-                      onPress={() => {
-                        if (activeSelect) setField(activeSelect, option.label);
-                        setActiveSelect(null);
-                        setOptionSearch('');
-                      }}
-                      style={({ pressed }) => [styles.optionRow, { borderBottomColor: colors.border }, pressed && { backgroundColor: colors.accentSoft }]}
-                    >
-                      <Text style={[styles.optionLabel, { color: colors.text }]}>{option.label}</Text>
-                      {activeSelect && form[activeSelect] === option.label ? <Ionicons name="checkmark" size={19} color={colors.accent} /> : null}
-                    </Pressable>
-                  ))}
+                  {filteredOptions.map((option) => {
+                    if (activeSelect === 'templateTransId') {
+                      const isSelected = selectedTemplateTransId === option.value;
+                      const { partNo: optionPartNo, serialNo: optionSerialNo } = parseTransIdParts(option.label);
+                      return (
+                        <Pressable
+                          key={`${option.value}:${option.label}`}
+                          onPress={() => {
+                            setActiveSelect(null);
+                            setOptionSearch('');
+                            void applyTemplateTransId(option.value);
+                          }}
+                          style={({ pressed }) => [
+                            styles.templateOptionCard,
+                            {
+                              backgroundColor: isSelected ? colors.accentSoft : colors.surfaceAlt,
+                              borderColor: isSelected ? colors.accent : colors.border,
+                            },
+                            pressed && { opacity: 0.8 },
+                          ]}
+                        >
+                          <View
+                            style={[
+                              styles.templateOptionBadge,
+                              { backgroundColor: isSelected ? colors.accent : colors.accentSoft },
+                            ]}
+                          >
+                            <Ionicons
+                              name="document-text-outline"
+                              size={16}
+                              color={isSelected ? '#ffffff' : colors.accent}
+                            />
+                          </View>
+                          <View style={styles.templateOptionCopy}>
+                            <Text numberOfLines={1} style={[styles.templateOptionTitle, { color: colors.text }]}>
+                              {optionPartNo}
+                            </Text>
+                            {optionSerialNo ? (
+                              <Text numberOfLines={1} style={[styles.templateOptionSubtitle, { color: colors.muted }]}>
+                                Serial No: {optionSerialNo}
+                              </Text>
+                            ) : null}
+                          </View>
+                          {isSelected ? (
+                            <Ionicons name="checkmark-circle" size={20} color={colors.accent} />
+                          ) : (
+                            <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+                          )}
+                        </Pressable>
+                      );
+                    }
+                    return (
+                      <Pressable
+                        key={`${option.value}:${option.label}`}
+                        onPress={() => {
+                          if (activeSelect) setField(activeSelect, option.label);
+                          setActiveSelect(null);
+                          setOptionSearch('');
+                        }}
+                        style={({ pressed }) => [styles.optionRow, { borderBottomColor: colors.border }, pressed && { backgroundColor: colors.accentSoft }]}
+                      >
+                        <Text style={[styles.optionLabel, { color: colors.text }]}>{option.label}</Text>
+                        {!!activeSelect && form[activeSelect] === option.label ? (
+                          <Ionicons name="checkmark" size={19} color={colors.accent} />
+                        ) : null}
+                      </Pressable>
+                    );
+                  })}
                   {!currentOptions.length ? (
                     <Text style={[styles.noOptions, { color: colors.muted }]}>
-                      {currentSelect?.optionType && optionErrors[currentSelect.optionType]
+                      {activeSelect === 'templateTransId'
+                        ? templateError || 'No partnos from this project in history.'
+                        : currentSelect?.optionType && optionErrors[currentSelect.optionType]
                         ? optionErrors[currentSelect.optionType]
                         : currentSelect?.optionType === 'employees' || currentSelect?.optionType === 'dimensions'
                         ? 'No options for this partno'
@@ -1617,6 +1986,16 @@ const styles = StyleSheet.create({
   detailItem: { width: '48%', minHeight: 53, padding: 10, borderRadius: 12 },
   detailLabel: { fontSize: 9, fontWeight: '600', marginBottom: 4, textTransform: 'capitalize' },
   detailValue: { fontSize: 11, fontWeight: '600' },
+  templateSelectContainer: { marginTop: 14, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  templateSelectedControl: { paddingVertical: 8 },
+  templateSelectedCopy: { flex: 1, gap: 2 },
+  templateSelectedTitle: { fontSize: 12, fontWeight: '700' },
+  templateSelectedSubtitle: { fontSize: 10, fontWeight: '600' },
+  templateOptionCard: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 11, borderWidth: 1, borderRadius: 14, marginBottom: 8 },
+  templateOptionBadge: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  templateOptionCopy: { flex: 1, minWidth: 0, gap: 3 },
+  templateOptionTitle: { fontSize: 13, fontWeight: '700' },
+  templateOptionSubtitle: { fontSize: 11, fontWeight: '600' },
   formCard: { borderWidth: 1, borderRadius: 22, padding: 18, marginBottom: 22 },
   formHeading: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 20 },
   entryTabs: { flexDirection: 'row', gap: 6, padding: 5, borderWidth: 1, borderRadius: 14, marginBottom: 18 },
